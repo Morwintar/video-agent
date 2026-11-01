@@ -3,6 +3,12 @@
 Les changements notables du projet sont consignés ici. Les versions suivent
 [SemVer](https://semver.org/).
 
+## [0.4.1] - 2026-11-01
+
+### Fixed
+- Agent Editor s’enregistre encore sur les builds Desktop antérieurs sans `ctx.media`; l’erreur de lecture invite à mettre à jour Desktop au lieu de faire échouer le chargement du plugin.
+- L’installation du paquet unifié via l’installateur Hermes Desktop active aussi son compagnon Agent Editor.
+
 ## [0.4.0] - 2026-11-01
 
 ### Added

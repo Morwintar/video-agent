@@ -443,7 +443,7 @@ export default {
   name: 'Agent Editor',
   register(ctx) {
     const rest = (path, options) => ctx.rest(path, options)
-    const media = { resolveUrl: path => ctx.media.resolveUrl(path) }
+    const media = ctx.media?.resolveUrl ? { resolveUrl: path => ctx.media.resolveUrl(path) } : undefined
     const openExternal = url => ctx.os.openExternal(url)
     const scheduleInterval = (callback, milliseconds) => ctx.setInterval(callback, milliseconds)
     ctx.register({

@@ -54,13 +54,13 @@
    Montez votre volume/dataset sur `workspace/` et assurez-vous que le processus du gateway peut lire les vidéos et écrire dans `References/links.json`. `Waiting`, `References` et `Finish` acceptent des sous-dossiers et sont parcourus récursivement.
 3. Le plugin active ce workspace quand les trois dossiers existent. Jusqu’à ce qu’il soit prêt, il conserve l’ancien chemin `$HERMES_HOME/inbox/stream-test/` comme repli; **aucun fichier existant n’est déplacé**. Un chemin absolu différent peut être fourni par `VIDEO_AGENT_WORKSPACE`.
 4. Démarrez ou rechargez le service Hermes qui héberge le plugin, puis actualisez le Dashboard.
-5. Pour les commandes et la page Desktop, activez le paquet Agent Plugin avec `hermes plugins enable video-agent`; dans Hermes Desktop, assurez-vous que **Agent Editor** est activé dans **Settings → Plugins**. L’entrée Desktop est `desktop/plugin.js`; l’application surveille les plugins Desktop et les recharge en direct. Si le nouvel onglet ne paraît pas, utilisez **Reload desktop plugins** dans la palette de commandes (`⌘K`).
+5. Pour installer le paquet unifié depuis l’installateur de plugins Hermes Desktop, l’activation du paquet est incluse par défaut et son compagnon **Agent Editor** s’active avec lui. Une copie manuelle dans `desktop-plugins/` doit être activée dans **Settings → Plugins**. Si la page n’apparaît pas après l’installation ou une mise à jour, utilisez **Reload desktop plugins** dans la palette (`⌘K`).
 
 Seul le marqueur `workspace/.gitkeep` est versionné; le reste de `workspace/` est ignoré, donc ni les MP4 ni les données montées ne seront ajoutés au dépôt public. Les liens/notes sont enregistrés dans `References/links.json` quand le workspace est actif; les références existantes dans `$HERMES_HOME/state/waiting-studio/references.json` restent lisibles jusqu’à la première modification dans le workspace. Les brouillons, repères et dérivés de compatibilité restent pour l’instant sous `$HERMES_HOME/state/waiting-studio/` afin d’éviter une migration implicite.
 
 ## Versionnement et mises à jour
 
-Le plugin porte actuellement la version `0.4.0` dans ses manifestes :
+Le plugin porte actuellement la version `0.4.1` dans ses manifestes :
 
 - `plugin.yaml` — identité du paquet Agent Plugin et du compagnon Desktop.
 - `plugin.json` — version du paquet portable Agent Plugins.
@@ -70,7 +70,7 @@ On gardera ces valeurs identiques et on suivra SemVer (`MAJOR.MINOR.PATCH`) : co
 
 Le numéro de version **ne déclenche pas** la mise à jour. La révision Git est ce qui détermine le code installé : un push sur `main` publie le nouveau code, mais ne met pas à jour à lui seul une copie déjà installée. Pour une installation Git suivie par le gestionnaire Hermes, `hermes plugins check-updates` vérifie l’état sans modifier les fichiers, et `hermes plugins update video-agent` applique l’update. Les installs Git non épinglées sont comparées au `HEAD` distant; une install épinglée à un SHA reste épinglée jusqu’à ce qu’on installe explicitement un nouveau SHA. Un clone créé à la main doit d’abord être adopté par le gestionnaire (`hermes plugins adopt video-agent`) pour être suivi. Ces commandes dépendent de la version de Hermes installée; elles ne sont pas lancées depuis ce dépôt.
 
-`video-agent` n’est pas présent dans le catalogue officiel Hermes : son mode d’update, si on utilise le gestionnaire, est celui d’un plugin Git personnalisé. Après une mise à jour, il faut rafraîchir le Dashboard; les changements backend dépendent du rechargement du processus qui héberge le plugin. **La lecture Desktop en 0.4.0 requiert aussi un build Hermes Desktop qui expose `ctx.media.resolveUrl`; mettre à jour le plugin seul ne met pas à jour cette capacité du client.** Aucun redémarrage ni push n’est fait automatiquement par ce projet.
+`video-agent` n’est pas présent dans le catalogue officiel Hermes : son mode d’update, si on utilise le gestionnaire, est celui d’un plugin Git personnalisé. Après une mise à jour, il faut rafraîchir le Dashboard; les changements backend dépendent du rechargement du processus qui héberge le plugin. La version `0.4.1` reste chargeable avec un Desktop plus ancien; la lecture dans Agent Editor exige toutefois un build qui expose `ctx.media.resolveUrl`. Une mise à jour du plugin seule ne fournit pas cette capacité cliente.
 
 ## Données et confidentialité
 

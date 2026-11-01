@@ -29,6 +29,15 @@ assert.equal(plugin.name, "Agent Editor");
 const registrations = [];
 const apiCalls = [];
 const mediaCalls = [];
+const legacyRegistrations = [];
+assert.doesNotThrow(() => plugin.register({
+  register: item => legacyRegistrations.push(item),
+  rest: () => Promise.resolve({}),
+  os: { openExternal() {} },
+  setInterval() {},
+}), "The Agent Editor plugin should still register on Desktop builds without the media capability");
+assert.ok(legacyRegistrations.some(item => item.area === "routes" && item.data.path === "/agent-editor"));
+assert.ok(legacyRegistrations.some(item => item.area === "sidebar.nav" && item.data.path === "/agent-editor"));
 const hookStates = new Map();
 const mutationCalls = [];
 let currentComponent = null;
@@ -218,6 +227,13 @@ assert.equal(moduleStub.exports.parseTimecode("00:00:00.1234"), null);
 assert.equal(moduleStub.exports.formatTimecode(3723.5), "01:02:03.500");
 
 (async () => {
+  const queryCountBeforeLegacyRender = queryOptions.length;
+  const legacyPageRegistration = legacyRegistrations.find(item => item.area === "routes");
+  render(legacyPageRegistration.render());
+  const legacyStreamQuery = queryOptions.slice(queryCountBeforeLegacyRender).find(options => options.queryKey[1] === "stream");
+  assert.ok(legacyStreamQuery, "A legacy Desktop should load the Agent Editor route and request its ticket");
+  await assert.rejects(legacyStreamQuery.queryFn(), /Mets Hermes Desktop à jour pour lire les vidéos avec le flux authentifié/);
+
   const streamQuery = queryOptions.find(options => options.queryKey[1] === "stream" && options.queryKey[2] === "waiting");
   assert.ok(streamQuery, "A one-video streaming ticket should be requested for the selected Waiting video");
   assert.equal(streamQuery.queryKey[3], "records/waiting-vod.mp4");
