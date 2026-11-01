@@ -112,6 +112,10 @@ const windowStub = {
         storedMoments = [...storedMoments, moment];
         return { moment };
       }
+      if (init && init.method === "POST" && url.endsWith("/content/records%2Fwaiting-vod.mp4/renders")) {
+        const payload = JSON.parse(init.body);
+        return { job: { id: "render-job-1", kind: payload.kind, status: "queued", progress: 0, total: payload.momentIds.length } };
+      }
       if (init && init.method === "POST" && url.endsWith("/references")) {
         const payload = JSON.parse(init.body);
         return { reference: { id: "reference-new", platform: "YouTube", ...payload, downloadStatus: "queued" } };
@@ -487,6 +491,29 @@ async function main() {
     targetFormat: "short",
   });
   assert.equal(storedMoments.length, 1, "the marker should be stored against the selected VOD");
+
+  hookIndex = 0;
+  pendingEffects.length = 0;
+  tree = render(React.createElement(registeredComponent, {}));
+  assert.ok(findAll(tree, (node) => node.type === "p" && (node.children || []).includes("Le retournement du duel.")).length,
+    "saved marker notes should be visible beside their timecodes");
+  const markerCheckbox = findAll(tree, (node) => node.type === "input" && String(node.props["aria-label"]).startsWith("Sélectionner le repère"))[0];
+  assert.ok(markerCheckbox, "saved markers should be selectable for generation");
+  markerCheckbox.props.onChange();
+  hookIndex = 0;
+  pendingEffects.length = 0;
+  tree = render(React.createElement(registeredComponent, {}));
+  const generateClipsButton = findAll(tree, (node) => node.type === "button" && node.props["aria-label"] === "Générer les clips")[0];
+  const generateBestOfButton = findAll(tree, (node) => node.type === "button" && (node.children || []).includes("Générer Best Of"))[0];
+  assert.ok(generateClipsButton && generateBestOfButton, "clip and Best Of buttons should be visible on a selected VOD");
+  await generateClipsButton.props.onClick();
+  const renderPost = apiCalls.find((call) => call.url.endsWith("/content/records%2Fwaiting-vod.mp4/renders") && call.init && call.init.method === "POST");
+  assert.ok(renderPost, "rendering should submit the selected moments to the VOD render endpoint");
+  assert.deepEqual(JSON.parse(renderPost.init.body), {
+    kind: "clips",
+    momentIds: [storedMoments[0].id],
+    clipDurationSeconds: 18,
+  });
 
   hookIndex = 0;
   pendingEffects.length = 0;

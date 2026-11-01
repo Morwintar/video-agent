@@ -3,7 +3,11 @@
 Les changements notables du projet sont consignés ici. Les versions suivent
 [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.5.1] - 2026-11-01
+
+### Added
+- Affiche clairement les notes, cibles et timecodes des repères; permet de les sélectionner dans Desktop et Dashboard, puis de générer des copies verticales H.264 de 15 à 20 s ou un Best Of de 30 min maximum dans `Finish`.
+- Les rendus sont asynchrones, suivent leur progression et n’altèrent ni la rediffusion source ni ses pistes audio; le découpage est centré sur chaque repère sélectionné. Les références ne sont pas encore analysées automatiquement pour choisir des moments.
 
 ### Fixed
 - Place les nouvelles copies MP4 directement à la racine de `workspace/References/`; lors du chargement des références, migre sans écrasement les copies gérées de l’ancien sous-dossier `downloads/` pour les rendre immédiatement visibles dans la bibliothèque.

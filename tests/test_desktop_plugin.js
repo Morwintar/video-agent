@@ -160,6 +160,21 @@ const initialPlayer = findNode(page, node => node.type === "video");
 assert.ok(initialPlayer, "Selected video should open in the embedded player");
 assert.equal(initialPlayer.props.src, sampleMediaUrl);
 assert.equal(initialPlayer.props.controls, true);
+assert.ok(pageText.includes("Payoff"), "Marker notes should be visible in the marker list");
+const selectMomentCheckbox = findNode(page, node => node.type === "input" && node.props.type === "checkbox");
+assert.ok(selectMomentCheckbox, "Saved moments should be selectable for rendering");
+selectMomentCheckbox.props.onChange();
+page = renderPage();
+const generateClipsButton = findNode(page, node => node.type === "button" && collectText(node).includes("Générer les clips"));
+const generateBestOfButton = findNode(page, node => node.type === "button" && collectText(node).includes("Générer Best Of"));
+assert.ok(generateClipsButton && generateBestOfButton, "Clip and Best Of generation actions should be available");
+assert.equal(generateClipsButton.props.disabled, false);
+assert.equal(generateBestOfButton.props.disabled, false);
+generateClipsButton.props.onClick();
+assert.deepEqual(JSON.parse(JSON.stringify(apiCalls.find(call => call.url.endsWith("/renders")))), {
+  url: "/content/records%2Fwaiting-vod.mp4/renders",
+  options: { method: "POST", body: { kind: "clips", momentIds: ["moment-1"], clipDurationSeconds: 18 } },
+});
 initialPlayer.props.onTimeUpdate({ currentTarget: { currentTime: 123.4 } });
 page = renderPage();
 const takePositionButton = findNode(page, node => node.type === "button" && collectText(node).includes("Prendre la position"));
@@ -184,8 +199,8 @@ momentNoteInput.props.onChange({ target: { value: "Bonne réaction" } });
 page = renderPage();
 const momentForm = findNode(page, node => node.type === "form" && typeof node.props.onSubmit === "function");
 momentForm.props.onSubmit({ preventDefault() {} });
-assert.equal(mutationCalls.length, 1);
-assert.deepEqual(JSON.parse(JSON.stringify(apiCalls[0])), {
+assert.equal(mutationCalls.length, 2);
+assert.deepEqual(JSON.parse(JSON.stringify(apiCalls.find(call => call.url.endsWith("/moments")))), {
   url: "/content/records%2Fwaiting-vod.mp4/moments",
   options: { method: "POST", body: { timeSeconds: 62.5, note: "Bonne réaction", targetFormat: "both" } },
 });
@@ -227,7 +242,7 @@ assert.deepEqual(JSON.parse(JSON.stringify(apiCalls.find(call => call.url === "/
   url: "/references",
   options: { method: "POST", body: { url: "https://youtu.be/example", note: "Rythme et cadrage" } },
 });
-assert.equal(mutationCalls.length, 3);
+assert.equal(mutationCalls.length, 4);
 
 assert.equal(moduleStub.exports.parseTimecode("01:02"), 62);
 assert.equal(moduleStub.exports.parseTimecode("01:02:03.5"), 3723.5);

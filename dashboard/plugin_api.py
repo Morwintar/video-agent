@@ -1,4 +1,4 @@
-"""Read-only media inventory and scoped preview/skill-authoring API."""
+"""Local media inventory, protected previews, content notes, and render-job API."""
 
 from __future__ import annotations
 
@@ -44,6 +44,12 @@ _MAX_VIDEO_MOMENTS_PER_SOURCE = 500
 _MAX_MOMENTS_STORE_SIZE = 8_000_000
 _MAX_MOMENT_SECONDS = 24 * 60 * 60
 _MAX_MOMENT_NOTE_LENGTH = 500
+_MIN_GENERATED_CLIP_SECONDS = 15
+_MAX_GENERATED_CLIP_SECONDS = 20
+_MAX_RENDER_MARKERS_PER_JOB = 90
+_MAX_BEST_OF_SECONDS = 30 * 60
+_MAX_RENDER_JOBS = 100
+_MAX_RENDER_JOB_STORE_SIZE = 16_000_000
 _CONTENT_TEXT_LIMITS = {"title": 200, "concept": 5_000, "hook": 2_000, "script": 20_000, "notes": 4_000}
 _MAX_RELATIVE_VIDEO_PATH_LENGTH = 1_024
 _MAX_RELATIVE_VIDEO_PATH_DEPTH = 16
@@ -53,6 +59,8 @@ _REFERENCE_LOCK = threading.Lock()
 _REFERENCE_DOWNLOAD_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="video-agent-reference")
 _MAX_REFERENCE_DOWNLOAD_BYTES = 30 * 1024**3
 _CONTENT_LOCK = threading.Lock()
+_RENDER_LOCK = threading.Lock()
+_RENDER_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="video-agent-render")
 _THUMBNAIL_GENERATION_LOCK = threading.BoundedSemaphore(2)
 _MAX_THUMBNAIL_BYTES = 2_000_000
 _THUMBNAIL_CACHE_ENTRIES = 128
@@ -965,6 +973,7 @@ def _get_content_workspace(media_root: Path, home: Path, source_filename: str) -
         for video in finish_inventory.get("videos", [])
         if video["name"].casefold().startswith(f"{source_stem}_")
     ]
+    render_jobs = [job for job in _load_render_jobs(home) if job["sourceFilename"] == source_filename]
     return {
         "sourceFilename": source_filename,
         "items": [draft for draft in drafts if draft["sourceFilename"] == source_filename],
@@ -973,6 +982,7 @@ def _get_content_workspace(media_root: Path, home: Path, source_filename: str) -
         "clipsTruncated": finish_inventory.get("truncated", False),
         "references": _list_references(home),
         "observationChecklist": _reference_observation_checklist(),
+        "renderJobs": render_jobs,
     }
 
 
@@ -1108,6 +1118,351 @@ def _create_video_moment(
         return moment
 
 
+class _RenderJobConflictError(Exception):
+    """Raised when the bounded render-job store cannot accept another job."""
+
+
+def _load_render_jobs(home: Path) -> list[dict[str, Any]]:
+    directory = _state_directory(home)
+    if directory is None:
+        return []
+    store = directory / "render-jobs.json"
+    if store.is_symlink():
+        raise OSError("unsafe render-job store")
+    if not store.exists():
+        return []
+    if not store.is_file() or store.stat().st_size > _MAX_RENDER_JOB_STORE_SIZE:
+        raise OSError("invalid render-job store")
+    try:
+        payload = json.loads(store.read_text(encoding="utf-8"))
+        raw_jobs = payload.get("jobs") if isinstance(payload, dict) and payload.get("version") == 1 else None
+        if not isinstance(raw_jobs, list) or len(raw_jobs) > _MAX_RENDER_JOBS:
+            raise ValueError("invalid job list")
+        jobs: list[dict[str, Any]] = []
+        for item in raw_jobs:
+            if not isinstance(item, dict):
+                raise ValueError("invalid render job")
+            parsed_id = uuid.UUID(item.get("id", ""))
+            filename = item.get("sourceFilename")
+            moment_ids = item.get("momentIds")
+            kind = item.get("kind")
+            status = item.get("status")
+            duration = item.get("clipDurationSeconds")
+            progress = item.get("progress")
+            total = item.get("total")
+            outputs = item.get("outputFiles")
+            if (
+                str(parsed_id) != item.get("id")
+                or not isinstance(filename, str)
+                or _relative_video_parts(filename) is None
+                or kind not in {"clips", "best_of"}
+                or status not in {"queued", "rendering", "completed", "failed"}
+                or isinstance(duration, bool)
+                or not isinstance(duration, int)
+                or not _MIN_GENERATED_CLIP_SECONDS <= duration <= _MAX_GENERATED_CLIP_SECONDS
+                or not isinstance(moment_ids, list)
+                or not 1 <= len(moment_ids) <= _MAX_RENDER_MARKERS_PER_JOB
+                or not all(isinstance(moment_id, str) and str(uuid.UUID(moment_id)) == moment_id for moment_id in moment_ids)
+                or len(set(moment_ids)) != len(moment_ids)
+                or (kind == "best_of" and duration * len(moment_ids) > _MAX_BEST_OF_SECONDS)
+                or isinstance(progress, bool)
+                or not isinstance(progress, int)
+                or not 0 <= progress <= len(moment_ids)
+                or isinstance(total, bool)
+                or not isinstance(total, int)
+                or total != len(moment_ids)
+                or not isinstance(outputs, list)
+                or not all(_relative_video_parts(output) is not None for output in outputs)
+                or len(outputs) > _MAX_RENDER_MARKERS_PER_JOB
+                or not isinstance(item.get("createdAt"), str)
+                or not isinstance(item.get("phase", ""), str)
+                or not isinstance(item.get("error", ""), str)
+            ):
+                raise ValueError("invalid render-job metadata")
+            jobs.append({
+                "id": item["id"],
+                "sourceFilename": filename,
+                "kind": kind,
+                "momentIds": moment_ids,
+                "clipDurationSeconds": duration,
+                "status": status,
+                "progress": progress,
+                "total": total,
+                "phase": item.get("phase", ""),
+                "outputFiles": outputs,
+                "error": item.get("error", ""),
+                "createdAt": item["createdAt"],
+            })
+        return jobs
+    except (OSError, UnicodeError, ValueError, TypeError, AttributeError) as exc:
+        raise OSError("render-job store could not be read") from exc
+
+
+def _save_render_jobs(home: Path, jobs: list[dict[str, Any]]) -> None:
+    directory = _state_directory(home, create=True)
+    if directory is None:
+        raise OSError("render-job store is unavailable")
+    store = directory / "render-jobs.json"
+    if store.is_symlink():
+        raise OSError("unsafe render-job store")
+    serialized = json.dumps({"version": 1, "jobs": jobs}, ensure_ascii=False, indent=2) + chr(10)
+    if len(serialized.encode("utf-8")) > _MAX_RENDER_JOB_STORE_SIZE:
+        raise _RenderJobConflictError("Le registre des rendus est plein.")
+    descriptor, temporary_name = tempfile.mkstemp(prefix=".render-jobs-", suffix=".tmp", dir=directory)
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            stream.write(serialized)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, store)
+        os.chmod(store, 0o600)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def _create_render_job(
+    media_root: Path,
+    home: Path,
+    source_filename: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    if _resolve_waiting_video(media_root, source_filename) is None:
+        raise FileNotFoundError("La rediffusion n’est pas un MP4 régulier de Waiting.")
+    if not isinstance(payload, dict):
+        raise ValueError("La demande de rendu doit être un objet JSON.")
+    kind = payload.get("kind")
+    if not isinstance(kind, str) or kind not in {"clips", "best_of"}:
+        raise ValueError("Le type doit être clips ou best_of.")
+    duration = payload.get("clipDurationSeconds")
+    if isinstance(duration, bool) or not isinstance(duration, int) or not _MIN_GENERATED_CLIP_SECONDS <= duration <= _MAX_GENERATED_CLIP_SECONDS:
+        raise ValueError("La durée de chaque clip doit être comprise entre 15 et 20 secondes.")
+    raw_moment_ids = payload.get("momentIds")
+    if not isinstance(raw_moment_ids, list) or not 1 <= len(raw_moment_ids) <= _MAX_RENDER_MARKERS_PER_JOB:
+        raise ValueError("Sélectionne entre 1 et 90 repères.")
+    moment_ids: list[str] = []
+    for raw_id in raw_moment_ids:
+        try:
+            parsed_id = uuid.UUID(raw_id) if isinstance(raw_id, str) else None
+        except ValueError as exc:
+            raise ValueError("Identifiant de repère invalide.") from exc
+        if parsed_id is None or str(parsed_id) != raw_id or raw_id in moment_ids:
+            raise ValueError("Identifiant de repère invalide ou dupliqué.")
+        moment_ids.append(raw_id)
+    if kind == "best_of" and duration * len(moment_ids) > _MAX_BEST_OF_SECONDS:
+        raise ValueError("Le Best Of dépasserait la limite de 30 minutes.")
+
+    with _CONTENT_LOCK:
+        moments = _load_video_moments(home)
+    available_moments = {
+        moment["id"]: moment
+        for moment in moments
+        if moment["sourceFilename"] == source_filename
+    }
+    if any(moment_id not in available_moments for moment_id in moment_ids):
+        raise ValueError("Un ou plusieurs repères ne correspondent pas à cette rediffusion.")
+
+    with _RENDER_LOCK:
+        jobs = _load_render_jobs(home)
+        if len(jobs) >= _MAX_RENDER_JOBS:
+            raise _RenderJobConflictError("Le registre contient déjà le maximum de rendus.")
+        job = {
+            "id": str(uuid.uuid4()),
+            "sourceFilename": source_filename,
+            "kind": kind,
+            "momentIds": moment_ids,
+            "clipDurationSeconds": duration,
+            "status": "queued",
+            "progress": 0,
+            "total": len(moment_ids),
+            "phase": "En attente du rendu",
+            "outputFiles": [],
+            "error": "",
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+        }
+        jobs.append(job)
+        _save_render_jobs(home, jobs)
+    return job
+
+
+def _update_render_job(home: Path, job_id: str, **changes: Any) -> dict[str, Any] | None:
+    with _RENDER_LOCK:
+        jobs = _load_render_jobs(home)
+        job = next((item for item in jobs if item["id"] == job_id), None)
+        if job is None:
+            return None
+        job.update(changes)
+        _save_render_jobs(home, jobs)
+        return dict(job)
+
+
+def _probe_video_duration(source_path: Path) -> float:
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", str(source_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=45,
+    )
+    duration = float(result.stdout.strip())
+    if not math.isfinite(duration) or duration <= 0:
+        raise RuntimeError("invalid source duration")
+    return duration
+
+
+def _render_vertical_segment(source_path: Path, start: float, duration: int, output_path: Path) -> None:
+    filter_graph = (
+        "[0:v]split=2[background][foreground];"
+        "[background]scale=1080:1920:force_original_aspect_ratio=increase,"
+        "crop=1080:1920,boxblur=20:10[background_vertical];"
+        "[foreground]scale=1080:1920:force_original_aspect_ratio=decrease[foreground_fit];"
+        "[background_vertical][foreground_fit]overlay=(W-w)/2:(H-h)/2,"
+        "setsar=1,fps=30,format=yuv420p[vertical]"
+    )
+    subprocess.run(
+        [
+            "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-n",
+            "-ss", f"{start:.3f}", "-i", str(source_path), "-t", str(duration),
+            "-filter_complex", filter_graph, "-map", "[vertical]", "-map", "0:a?",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+            "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart",
+            str(output_path),
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        timeout=1800,
+    )
+    if not output_path.is_file() or output_path.stat().st_size <= 0:
+        raise RuntimeError("FFmpeg did not produce a video")
+
+
+def _concat_rendered_segments(segment_paths: list[Path], output_path: Path, staging_directory: Path) -> None:
+    concat_file = staging_directory / "concat-list.txt"
+    entries = []
+    for segment in segment_paths:
+        entries.append(f"file {segment.name}")
+    concat_file.write_text(chr(10).join(entries) + chr(10), encoding="utf-8")
+    subprocess.run(
+        [
+            "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-n",
+            "-f", "concat", "-safe", "0", "-i", str(concat_file),
+            "-map", "0", "-c", "copy", "-movflags", "+faststart", str(output_path),
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        timeout=1800,
+    )
+    if not output_path.is_file() or output_path.stat().st_size <= 0:
+        raise RuntimeError("FFmpeg did not produce the Best Of")
+
+
+def _render_job_worker(home: Path, job_id: str) -> None:
+    staging_directory: Path | None = None
+    published_outputs: list[Path] = []
+    try:
+        jobs = _load_render_jobs(home)
+        job = next((item for item in jobs if item["id"] == job_id), None)
+        if job is None:
+            return
+        _update_render_job(home, job_id, status="rendering", phase="Préparation du rendu")
+        media_root = _media_root()
+        source_path = _resolve_waiting_video(media_root, job["sourceFilename"])
+        if source_path is None:
+            raise FileNotFoundError("source video unavailable")
+        source_duration = _probe_video_duration(source_path)
+        if source_duration < job["clipDurationSeconds"]:
+            raise RuntimeError("source video is shorter than the requested clip duration")
+        with _CONTENT_LOCK:
+            moments = _load_video_moments(home)
+        moment_map = {moment["id"]: moment for moment in moments if moment["sourceFilename"] == job["sourceFilename"]}
+        selected_moments = [moment_map[moment_id] for moment_id in job["momentIds"] if moment_id in moment_map]
+        if len(selected_moments) != len(job["momentIds"]):
+            raise RuntimeError("selected markers are no longer available")
+        finish_directory = media_root / "Finish"
+        if finish_directory.is_symlink() or not finish_directory.is_dir() or finish_directory.resolve(strict=True).parent != media_root.resolve(strict=True):
+            raise RuntimeError("Finish directory unavailable")
+        staging_root = finish_directory / ".video-agent-rendering"
+        if staging_root.is_symlink():
+            raise RuntimeError("unsafe render staging directory")
+        staging_root.mkdir(mode=0o700, exist_ok=True)
+        staging_directory = staging_root / job_id
+        staging_directory.mkdir(mode=0o700, exist_ok=False)
+        duration = job["clipDurationSeconds"]
+        segment_paths: list[Path] = []
+        for index, moment in enumerate(selected_moments):
+            anchor = float(moment["timeSeconds"])
+            if anchor >= source_duration:
+                raise RuntimeError("selected marker exceeds source duration")
+            start = max(0.0, anchor - duration / 2)
+            if start + duration > source_duration:
+                start = max(0.0, source_duration - duration)
+            segment_path = staging_directory / f"segment-{index:03d}.mp4"
+            _update_render_job(
+                home,
+                job_id,
+                phase=f"Rendu du clip {index + 1}/{len(selected_moments)}",
+                progress=index,
+            )
+            _render_vertical_segment(source_path, start, duration, segment_path)
+            segment_paths.append(segment_path)
+            _update_render_job(home, job_id, progress=index + 1)
+
+        source_stem = Path(job["sourceFilename"].rsplit("/", 1)[-1]).stem
+        if job["kind"] == "clips":
+            output_names = [
+                f"{source_stem}_clip_{index + 1:02d}_{job_id[:8]}.mp4"
+                for index in range(len(segment_paths))
+            ]
+            for segment_path, output_name in zip(segment_paths, output_names):
+                output_path = finish_directory / output_name
+                os.link(segment_path, output_path, follow_symlinks=False)
+                published_outputs.append(output_path)
+                segment_path.unlink()
+        else:
+            best_of_temp = staging_directory / "best-of.mp4"
+            _update_render_job(home, job_id, phase="Assemblage du Best Of")
+            _concat_rendered_segments(segment_paths, best_of_temp, staging_directory)
+            output_name = f"{source_stem}_best-of_{job_id[:8]}.mp4"
+            output_path = finish_directory / output_name
+            os.link(best_of_temp, output_path, follow_symlinks=False)
+            published_outputs.append(output_path)
+            output_names = [output_name]
+
+        _update_render_job(
+            home,
+            job_id,
+            status="completed",
+            progress=len(selected_moments),
+            phase="Rendu terminé",
+            outputFiles=output_names,
+            error="",
+        )
+    except Exception:
+        for output_path in published_outputs:
+            output_path.unlink(missing_ok=True)
+        _update_render_job(
+            home,
+            job_id,
+            status="failed",
+            phase="Rendu échoué",
+            error="Le rendu n’a pas abouti. Vérifie que FFmpeg peut lire ce MP4 et réessaie.",
+        )
+    finally:
+        if staging_directory is not None and staging_directory.exists() and not staging_directory.is_symlink():
+            shutil.rmtree(staging_directory, ignore_errors=True)
+
+
+def _schedule_render_job(home: Path, job_id: str) -> None:
+    """Queue a local FFmpeg render without blocking the API response."""
+    _RENDER_EXECUTOR.submit(_render_job_worker, home, job_id)
+
+
 def _media_root() -> Path:
     """Prefer the unified mountpoint, preserving the existing home path as a fallback."""
     workspace = _active_workspace_root()
@@ -1164,6 +1519,8 @@ def _scan_folder(root: Path, folder_id: str, label: str) -> dict[str, Any]:
                 entries_seen += 1
                 try:
                     if entry.is_dir(follow_symlinks=False):
+                        if folder_id == "finish" and entry.name == ".video-agent-rendering":
+                            continue
                         if recurse and depth < _MAX_WAITING_SCAN_DEPTH:
                             child = Path(entry.path)
                             resolved_child = child.resolve(strict=True)
@@ -1802,3 +2159,31 @@ def create_video_moment(filename: str, payload: dict[str, Any]) -> dict[str, Any
         raise HTTPException(status_code=422, detail="Moment invalide; vérifiez le timecode, la cible et la note.") from exc
     except OSError as exc:
         raise HTTPException(status_code=500, detail="Impossible d’enregistrer le moment local.") from exc
+
+
+@router.post("/content/{filename:path}/renders", status_code=202)
+def create_render_job(filename: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Queue vertical clips or a Best Of made from explicitly selected moments."""
+    home = _references_home()
+    try:
+        job = _create_render_job(_media_root(), home, filename, payload)
+        try:
+            _schedule_render_job(home, job["id"])
+        except RuntimeError as exc:
+            _update_render_job(
+                home,
+                job["id"],
+                status="failed",
+                phase="Rendu non démarré",
+                error="Le service de rendu n’a pas pu démarrer.",
+            )
+            raise HTTPException(status_code=503, detail="Le service de rendu est indisponible.") from exc
+        return {"job": job}
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Rediffusion introuvable dans Waiting.") from exc
+    except _RenderJobConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="Impossible d’enregistrer le travail de rendu.") from exc

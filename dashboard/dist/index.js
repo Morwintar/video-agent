@@ -788,7 +788,7 @@
   }
 
   function ContentWorkspace(props) {
-    const [workspace, setWorkspace] = useState({ loading: true, error: "", items: [], moments: [], clips: [], clipsTruncated: false, references: [], observationChecklist: [] });
+    const [workspace, setWorkspace] = useState({ loading: true, error: "", items: [], moments: [], clips: [], clipsTruncated: false, references: [], observationChecklist: [], renderJobs: [] });
     const [draft, setDraft] = useState({ format: "short", title: "", concept: "", hook: "", script: "", notes: "" });
     const [saving, setSaving] = useState(false);
     const [notice, setNotice] = useState(null);
@@ -798,6 +798,10 @@
     const [momentTarget, setMomentTarget] = useState("both");
     const [savingMoment, setSavingMoment] = useState(false);
     const [momentNotice, setMomentNotice] = useState(null);
+    const [selectedMomentIds, setSelectedMomentIds] = useState([]);
+    const [clipDurationSeconds, setClipDurationSeconds] = useState(18);
+    const [rendering, setRendering] = useState(false);
+    const [renderNotice, setRenderNotice] = useState(null);
     const videoRef = useRef(null);
     const assetLocation = waitingStudioAssetLocation();
     const sessionProtected = window.__HERMES_AUTH_REQUIRED__ === true;
@@ -827,6 +831,7 @@
           clipsTruncated: response.clipsTruncated === true,
           references: response.references,
           observationChecklist: Array.isArray(response.observationChecklist) ? response.observationChecklist : [],
+          renderJobs: Array.isArray(response.renderJobs) ? response.renderJobs : [],
         });
       } catch (_error) {
         setWorkspace((current) => ({ ...current, loading: false, error: "Impossible de charger les contenus et références de cette rediffusion." }));
@@ -836,6 +841,18 @@
     useEffect(() => {
       loadWorkspace();
     }, [loadWorkspace]);
+
+    useEffect(() => {
+      setSelectedMomentIds([]);
+      setRenderNotice(null);
+    }, [props.video.name]);
+
+    useEffect(() => {
+      const jobs = Array.isArray(workspace.renderJobs) ? workspace.renderJobs : [];
+      if (!jobs.some((job) => job.status === "queued" || job.status === "rendering")) return undefined;
+      const timer = window.setInterval(loadWorkspace, 3000);
+      return () => window.clearInterval(timer);
+    }, [workspace.renderJobs, loadWorkspace]);
 
     const handleMediaMessage = useCallback((event) => {
       const frame = videoRef.current;
@@ -885,6 +902,34 @@
         setMomentNotice({ kind: "error", text: "Impossible d’enregistrer ce repère. Vérifie la note et réessaie." });
       } finally {
         setSavingMoment(false);
+      }
+    };
+
+    const toggleSelectedMoment = (momentId) => {
+      setSelectedMomentIds(selectedMomentIds.includes(momentId)
+        ? selectedMomentIds.filter((id) => id !== momentId)
+        : [...selectedMomentIds, momentId]);
+    };
+
+    const submitRender = async (kind) => {
+      const selectedMoments = moments.filter((moment) => selectedMomentIds.includes(moment.id));
+      const totalDuration = selectedMoments.length * durationChoice;
+      if (!selectedMoments.length || (kind === "best_of" && totalDuration > 1800)) return;
+      setRendering(true);
+      setRenderNotice(null);
+      try {
+        const response = await SDK.fetchJSON(`${workspaceUrl}/renders`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kind, momentIds: selectedMoments.map((moment) => moment.id), clipDurationSeconds: durationChoice }),
+        });
+        if (!response || !response.job) throw new Error("Invalid render response");
+        setRenderNotice({ kind: "success", text: `${kind === "best_of" ? "Best Of" : "Clips"} en file d’attente. Les fichiers seront déposés dans Finish.` });
+        await loadWorkspace();
+      } catch (_error) {
+        setRenderNotice({ kind: "error", text: "Impossible de démarrer le rendu. Vérifie les repères et réessaie." });
+      } finally {
+        setRendering(false);
       }
     };
 
@@ -938,6 +983,12 @@
     const items = Array.isArray(workspace.items) ? workspace.items : [];
     const moments = Array.isArray(workspace.moments) ? workspace.moments : [];
     const clips = Array.isArray(workspace.clips) ? workspace.clips : [];
+    const renderJobs = Array.isArray(workspace.renderJobs) ? workspace.renderJobs : [];
+    const selectedMoments = moments.filter((moment) => selectedMomentIds.includes(moment.id));
+    const durationChoice = [15, 16, 17, 18, 19, 20].includes(Number(clipDurationSeconds)) ? Number(clipDurationSeconds) : 18;
+    const selectedDurationSeconds = selectedMoments.length * durationChoice;
+    const selectionWithinLimit = selectedMoments.length <= 90;
+    const renderInProgress = rendering || renderJobs.some((job) => job.status === "queued" || job.status === "rendering");
     const observationList = (entries, prefix) => h("ul", { className: "wvs__observation-list" },
       entries.map((entry) => h("li", { key: `${prefix}-${entry.id}` }, entry.label)),
     );
@@ -1012,9 +1063,27 @@
               ),
             ),
             h("div", { className: "wvs__moment-list-section" },
-              h("h3", { className: "wvs__content-subheading" }, `Moments repérés · ${moments.length}`),
+              h("div", { className: "wvs__panel-header" },
+                h("h3", { className: "wvs__content-subheading" }, `Moments repérés · ${moments.length}`),
+                h("button", { className: "wvs__refresh", type: "button", onClick: loadWorkspace, disabled: workspace.loading }, "Actualiser les repères"),
+              ),
+              h("div", { className: "wvs__reference-actions", "aria-label": "Actions sur les repères" },
+                h("button", { className: "wvs__refresh", type: "button", disabled: !moments.length, onClick: () => setSelectedMomentIds(moments.slice(0, 90).map((moment) => moment.id)) }, "Sélectionner les 90 premiers"),
+                h("button", { className: "wvs__refresh", type: "button", disabled: !selectedMoments.length, onClick: () => setSelectedMomentIds([]) }, "Tout désélectionner"),
+                h("label", { className: "wvs__field" },
+                  h("span", null, "Durée des clips"),
+                  h("select", { value: durationChoice, onChange: (event) => setClipDurationSeconds(Number(event.target.value)) },
+                    [15, 16, 17, 18, 19, 20].map((seconds) => h("option", { key: seconds, value: seconds }, `${seconds} s`)),
+                  ),
+                ),
+                h("span", { className: "wvs__count" }, `${selectedMoments.length} sélectionné(s)${selectionWithinLimit ? "" : " · maximum 90"} · Best Of ${formatTimecode(selectedDurationSeconds)} / max. 00:30:00`),
+                h("button", { className: "wvs__refresh", type: "button", disabled: !selectedMoments.length || !selectionWithinLimit || renderInProgress, onClick: () => submitRender("clips"), "aria-label": "Générer les clips" }, rendering ? "Envoi…" : "Générer les clips"),
+                h("button", { className: "wvs__refresh", type: "button", disabled: !selectedMoments.length || !selectionWithinLimit || selectedDurationSeconds > 1800 || renderInProgress, onClick: () => submitRender("best_of") }, "Générer Best Of"),
+              ),
+              renderNotice ? h("p", { className: `wvs__skill-notice wvs__skill-notice--${renderNotice.kind}`, role: renderNotice.kind === "error" ? "alert" : "status", "aria-live": "polite" }, renderNotice.text) : null,
               moments.length ? h("ul", { className: "wvs__moment-list" }, moments.map((moment) =>
                 h("li", { className: "wvs__moment-item", key: moment.id },
+                  h("input", { type: "checkbox", checked: selectedMomentIds.includes(moment.id), disabled: !selectedMomentIds.includes(moment.id) && selectedMomentIds.length >= 90, onChange: () => toggleSelectedMoment(moment.id), "aria-label": `Sélectionner le repère ${formatTimecode(moment.timeSeconds)}` }),
                   h("button", { className: "wvs__moment-seek", type: "button", onClick: () => seekToMoment(moment), title: `Reprendre à ${formatTimecode(moment.timeSeconds)}` }, formatTimecode(moment.timeSeconds)),
                   h("div", { className: "wvs__moment-details" },
                     h("span", { className: "wvs__content-format" }, momentTargetLabel(moment.targetFormat)),
@@ -1023,6 +1092,14 @@
                   ),
                 ),
               )) : h("p", { className: "wvs__empty" }, "Aucun moment repéré pour cette rediffusion."),
+              renderJobs.length ? h("div", { className: "wvs__moment-list", "aria-label": "État des générations" },
+                h("h3", { className: "wvs__content-subheading" }, "Générations"),
+                renderJobs.map((job) => h("div", { className: "wvs__render-job", key: job.id },
+                  h("p", null, `${job.kind === "best_of" ? "Best Of" : "Clips"} · ${job.phase || job.status} · ${job.progress}/${job.total}`),
+                  job.error ? h("p", { role: "alert" }, job.error) : null,
+                  job.outputFiles && job.outputFiles.length ? h("p", null, `Dans Finish : ${job.outputFiles.join(", ")}`) : null,
+                )),
+              ) : null,
             ),
           ),
         ),

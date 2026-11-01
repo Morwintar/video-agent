@@ -196,7 +196,38 @@ function MomentWorkspace({ rest, video, contentQuery, currentFolderId }) {
   const [validationError, setValidationError] = React.useState('')
   const [currentTime, setCurrentTime] = React.useState(0)
   const [seekTime, setSeekTime] = React.useState(null)
+  const [selectedMomentIds, setSelectedMomentIds] = React.useState(new Set())
+  const [clipDurationSeconds, setClipDurationSeconds] = React.useState(18)
+  const [renderNotice, setRenderNotice] = React.useState('')
   const moments = Array.isArray(contentQuery.data?.moments) ? contentQuery.data.moments : []
+  const renderJobs = Array.isArray(contentQuery.data?.renderJobs) ? contentQuery.data.renderJobs : []
+  const selectedMoments = moments.filter(moment => selectedMomentIds.has(moment.id))
+  const selectedDurationSeconds = selectedMoments.length * clipDurationSeconds
+  const selectionWithinLimit = selectedMoments.length <= 90
+  const renderMutation = useMutation({
+    mutationFn: payload => rest(`/content/${encodeURIComponent(video.name)}/renders`, { method: 'POST', body: payload }),
+    onSuccess: response => {
+      const job = response?.job
+      setRenderNotice(job ? `Rendu en file d’attente · ${job.kind === 'best_of' ? 'Best Of' : 'clips'}.` : 'Rendu envoyé en file d’attente.')
+      queryClient.invalidateQueries({ queryKey: [...QUERY_ROOT, 'content', video.name] })
+    },
+  })
+  React.useEffect(() => {
+    if (!renderJobs.some(job => job.status === 'queued' || job.status === 'rendering')) return undefined
+    const timer = setInterval(() => contentQuery.refetch(), 3000)
+    return () => clearInterval(timer)
+  }, [renderJobs, contentQuery.refetch])
+
+  function toggleMoment(momentId) {
+    const next = new Set(selectedMomentIds)
+    if (next.has(momentId)) next.delete(momentId)
+    else next.add(momentId)
+    setSelectedMomentIds(next)
+  }
+  function submitRender(kind) {
+    setRenderNotice('')
+    renderMutation.mutate({ kind, momentIds: selectedMoments.map(moment => moment.id), clipDurationSeconds })
+  }
   const momentMutation = useMutation({
     mutationFn: payload => rest(`/content/${encodeURIComponent(video.name)}/moments`, { method: 'POST', body: payload }),
     onSuccess: () => {
@@ -248,13 +279,33 @@ function MomentWorkspace({ rest, video, contentQuery, currentFolderId }) {
               className: 'flex flex-col gap-3 py-4 text-sm',
               children: [jsx('p', { className: 'text-(--ui-text-secondary)', role: 'alert', children: errorText(contentQuery.error, 'Impossible de charger les repères.') }), jsx(Button, { type: 'button', onClick: () => contentQuery.refetch(), children: 'Réessayer' })],
             })
-            : moments.length ? jsx('ol', {
-              className: 'flex min-h-0 flex-col gap-2 overflow-auto',
-              children: [...moments].sort((left, right) => left.timeSeconds - right.timeSeconds).map(moment => jsxs('li', {
-                className: 'grid grid-cols-[7.5rem_minmax(0,1fr)_5rem] gap-3 border-b border-(--ui-stroke-secondary) py-2 text-sm',
-                children: [jsx('button', { type: 'button', className: 'font-mono text-(--ui-accent) underline-offset-4 hover:underline', onClick: () => setSeekTime(moment.timeSeconds), 'aria-label': `Aller à ${formatTimecode(moment.timeSeconds)}`, children: formatTimecode(moment.timeSeconds) }), jsx('span', { className: 'break-words text-foreground', children: moment.note }), jsx('span', { className: 'text-right text-xs text-(--ui-text-tertiary)', children: moment.targetFormat === 'both' ? 'Les deux' : moment.targetFormat === 'short' ? 'Short' : 'Vidéo' })],
-              }, moment.id)),
-            }) : jsx('p', { className: 'py-4 text-sm text-(--ui-text-tertiary)', children: 'Pas encore de repère pour cette vidéo.' }),
+            : jsxs('div', {
+              className: 'flex min-h-0 flex-col gap-3',
+              children: [
+                jsxs('div', {
+                  className: 'flex flex-wrap items-end gap-2 border-b border-(--ui-stroke-secondary) pb-3',
+                  children: [
+                    jsx(Button, { type: 'button', disabled: !moments.length, onClick: () => setSelectedMomentIds(new Set(moments.slice(0, 90).map(moment => moment.id))), children: 'Sélectionner les 90 premiers' }),
+                    jsx(Button, { type: 'button', disabled: !selectedMoments.length, onClick: () => setSelectedMomentIds(new Set()), children: 'Tout désélectionner' }),
+                    jsx('label', { className: 'flex items-center gap-2 text-xs text-(--ui-text-secondary)', children: [jsx('span', { children: 'Durée des clips' }), jsx('select', { className: fieldClass(), value: clipDurationSeconds, onChange: event => setClipDurationSeconds(Number(event.target.value)), children: [15, 16, 17, 18, 19, 20].map(seconds => jsx('option', { value: seconds, children: `${seconds} s` }, seconds)) })] }),
+                    jsx('span', { className: 'text-xs text-(--ui-text-tertiary)', children: `${selectedMoments.length} sélectionné(s) · Best Of estimé ${formatTimecode(selectedDurationSeconds)} / max. 00:30:00` }),
+                    jsx(Button, { type: 'button', disabled: !selectedMoments.length || !selectionWithinLimit || renderMutation.isPending || renderJobs.some(job => job.status === 'queued' || job.status === 'rendering'), onClick: () => submitRender('clips'), children: renderMutation.isPending ? 'Envoi…' : 'Générer les clips' }),
+                    jsx(Button, { type: 'button', disabled: !selectedMoments.length || !selectionWithinLimit || selectedDurationSeconds > 1800 || renderMutation.isPending || renderJobs.some(job => job.status === 'queued' || job.status === 'rendering'), onClick: () => submitRender('best_of'), children: 'Générer Best Of' }),
+                    jsx(Button, { type: 'button', onClick: () => contentQuery.refetch(), children: 'Actualiser les repères' }),
+                  ],
+                }),
+                renderNotice ? jsx('p', { className: 'text-sm text-(--ui-text-secondary)', role: 'status', 'aria-live': 'polite', children: renderNotice }) : null,
+                renderMutation.error ? jsx('p', { className: 'text-sm text-(--ui-text-secondary)', role: 'alert', children: errorText(renderMutation.error, 'Le rendu n’a pas pu être démarré.') }) : null,
+                moments.length ? jsx('ol', {
+                  className: 'flex min-h-0 flex-col gap-2 overflow-auto',
+                  children: [...moments].sort((left, right) => left.timeSeconds - right.timeSeconds).map(moment => jsxs('li', {
+                    className: 'grid grid-cols-[auto_7.5rem_minmax(0,1fr)_5rem] items-start gap-3 border-b border-(--ui-stroke-secondary) py-2 text-sm',
+                    children: [jsx('input', { type: 'checkbox', checked: selectedMomentIds.has(moment.id), disabled: !selectedMomentIds.has(moment.id) && selectedMomentIds.size >= 90, onChange: () => toggleMoment(moment.id), 'aria-label': `Sélectionner le repère ${formatTimecode(moment.timeSeconds)}` }), jsx('button', { type: 'button', className: 'font-mono text-(--ui-accent) underline-offset-4 hover:underline', onClick: () => setSeekTime(moment.timeSeconds), 'aria-label': `Aller à ${formatTimecode(moment.timeSeconds)}`, children: formatTimecode(moment.timeSeconds) }), jsx('span', { className: 'break-words text-foreground', children: moment.note }), jsx('span', { className: 'text-right text-xs text-(--ui-text-tertiary)', children: moment.targetFormat === 'both' ? 'Les deux' : moment.targetFormat === 'short' ? 'Short' : 'Vidéo' })],
+                  }, moment.id)),
+                }) : jsx('p', { className: 'py-4 text-sm text-(--ui-text-tertiary)', children: 'Pas encore de repère pour cette vidéo.' }),
+                renderJobs.length ? jsxs('div', { className: 'flex flex-col gap-2 border-t border-(--ui-stroke-secondary) pt-3', children: [jsx('h3', { className: 'text-sm font-semibold text-foreground', children: 'Générations' }), ...renderJobs.map(job => jsxs('div', { className: 'flex flex-col gap-1 text-xs text-(--ui-text-secondary)', children: [jsx('span', { children: `${job.kind === 'best_of' ? 'Best Of' : 'Clips'} · ${job.phase || job.status} · ${job.progress}/${job.total}` }), job.error ? jsx('span', { role: 'alert', children: job.error }) : null, job.outputFiles?.length ? jsx('span', { children: `Fichiers dans Finish : ${job.outputFiles.join(', ')}` }) : null] }, job.id))] }) : null,
+              ],
+            }),
       }),
     ],
   })

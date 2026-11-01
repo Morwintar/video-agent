@@ -175,7 +175,9 @@ class ScanFolderTests(unittest.TestCase):
             (finish / "subfolder" / "ignored.mp4").write_bytes(b"f2")
             (extra / "not-listed.mp4").write_bytes(b"x")
 
-            with patch.dict(os.environ, {"HERMES_HOME": str(home)}):
+            with patch.dict(os.environ, {"HERMES_HOME": str(home)}), patch(
+                "plugin_api._plugin_root", return_value=home / "plugins" / "video-agent"
+            ):
                 payload = list_videos()
 
         self.assertTrue(payload["readOnly"])
@@ -650,11 +652,12 @@ class NewFeatureTests(unittest.TestCase):
 
     def test_new_references_capture_the_default_observation_checklist(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            reference = plugin_api._add_reference(
-                Path(temp_dir),
-                "https://youtu.be/abc123",
-                "Regarder l'accroche et les transitions.",
-            )
+            with patch("plugin_api._active_workspace_root", return_value=None):
+                reference = plugin_api._add_reference(
+                    Path(temp_dir),
+                    "https://youtu.be/abc123",
+                    "Regarder l'accroche et les transitions.",
+                )
 
         self.assertEqual(reference["note"], "Regarder l'accroche et les transitions.")
         self.assertGreaterEqual(len(reference["observationChecklist"]), 5)
@@ -681,7 +684,7 @@ class NewFeatureTests(unittest.TestCase):
             app.include_router(plugin_api.router, prefix="/api/plugins/video-agent")
             with patch("plugin_api._media_root", return_value=media_root), patch(
                 "plugin_api._references_home", return_value=home
-            ):
+            ), patch("plugin_api._active_workspace_root", return_value=None):
                 with TestClient(app) as client:
                     workspace = client.get("/api/plugins/video-agent/content/records%2Fnested-recording.mp4")
                     moment = client.post(
@@ -903,7 +906,7 @@ class NewFeatureTests(unittest.TestCase):
             app.include_router(plugin_api.router, prefix="/api/plugins/video-agent")
             with patch("plugin_api._media_root", return_value=media_root), patch(
                 "plugin_api._references_home", return_value=home
-            ):
+            ), patch("plugin_api._active_workspace_root", return_value=None):
                 with TestClient(app) as client:
                     preferred = client.get(
                         "/api/plugins/video-agent/videos/waiting/records%2Fsource.mp4?codec=auto",
@@ -941,11 +944,12 @@ class NewFeatureTests(unittest.TestCase):
             source = media_root / "Waiting" / "source.mp4"
             source.write_bytes(b"original-source")
             (media_root / "Finish" / "finished.mp4").write_bytes(b"finish-source")
-            saved_reference = plugin_api._add_reference(
-                home,
-                "https://www.youtube.com/shorts/abc123",
-                "Observer le hook et le rythme.",
-            )
+            with patch("plugin_api._active_workspace_root", return_value=None):
+                saved_reference = plugin_api._add_reference(
+                    home,
+                    "https://www.youtube.com/shorts/abc123",
+                    "Observer le hook et le rythme.",
+                )
 
             app = FastAPI()
             app.include_router(plugin_api.router, prefix="/api/plugins/video-agent")
@@ -959,7 +963,7 @@ class NewFeatureTests(unittest.TestCase):
             }
             with patch("plugin_api._media_root", return_value=media_root), patch(
                 "plugin_api._references_home", return_value=home
-            ):
+            ), patch("plugin_api._active_workspace_root", return_value=None):
                 with TestClient(app) as client:
                     initial = client.get("/api/plugins/video-agent/content/source.mp4")
                     created = client.post("/api/plugins/video-agent/content/source.mp4/items", json=payload)
@@ -1119,7 +1123,9 @@ class NewFeatureTests(unittest.TestCase):
                 "url": "https://www.youtube.com/shorts/abc123",
                 "note": "Référence de rythme.",
             }
-            with patch("plugin_api._references_home", return_value=home):
+            with patch("plugin_api._references_home", return_value=home), patch(
+                "plugin_api._active_workspace_root", return_value=None
+            ):
                 with TestClient(app) as client:
                     created = client.post("/api/plugins/video-agent/references", json=payload)
                     listing = client.get("/api/plugins/video-agent/references")
