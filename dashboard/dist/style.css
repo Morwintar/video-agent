@@ -1,0 +1,973 @@
+.wvs {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 76rem;
+  padding: 1.5rem;
+  color: var(--color-foreground);
+}
+
+.wvs *,
+.wvs *::before,
+.wvs *::after {
+  box-sizing: border-box;
+}
+
+.wvs__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.wvs__heading,
+.wvs__dialog-heading {
+  min-width: 0;
+}
+
+.wvs__eyebrow {
+  margin: 0 0 0.375rem;
+  color: var(--color-muted-foreground);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.wvs__title {
+  margin: 0;
+  color: var(--color-foreground);
+  font-size: 1.5rem;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.wvs__intro {
+  max-width: 42rem;
+  margin: 0.5rem 0 0;
+  color: var(--color-muted-foreground);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.wvs__refresh,
+.wvs__play,
+.wvs__close,
+.wvs__remove {
+  min-height: 2.5rem;
+  padding: 0.5rem 0.875rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius, 0.5rem);
+  background: var(--color-card);
+  color: var(--color-foreground);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.wvs__refresh {
+  flex: 0 0 auto;
+}
+
+.wvs__play {
+  flex: 0 0 auto;
+  min-width: 3.5rem;
+  align-self: center;
+}
+
+.wvs__close {
+  flex: 0 0 auto;
+}
+
+.wvs__refresh:hover:not(:disabled),
+.wvs__play:hover,
+.wvs__close:hover,
+.wvs__remove:hover:not(:disabled) {
+  background: var(--color-muted);
+}
+
+.wvs__refresh:focus-visible,
+.wvs__play:focus-visible,
+.wvs__close:focus-visible,
+.wvs__remove:focus-visible,
+.wvs__skill-form input:focus-visible,
+.wvs__skill-form textarea:focus-visible,
+.wvs__reference-form input:focus-visible,
+.wvs__reference-form textarea:focus-visible {
+  outline: 2px solid var(--color-ring, var(--color-primary));
+  outline-offset: 2px;
+}
+
+.wvs__refresh:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.wvs__notice {
+  min-height: 1.5rem;
+  margin-bottom: 0.75rem;
+  color: var(--color-muted-foreground);
+  font-size: 0.8125rem;
+}
+
+.wvs__notice[role="alert"],
+.wvs__skill-notice--error,
+.wvs__player-error {
+  color: var(--color-destructive);
+}
+
+.wvs__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+.wvs__panel {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius, 0.5rem);
+  background: var(--color-card);
+  color: var(--color-card-foreground);
+}
+
+.wvs__panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 1rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.wvs__panel-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.wvs__panel-subtitle {
+  margin: 0.25rem 0 0;
+  color: var(--color-muted-foreground);
+  font-size: 0.8125rem;
+}
+
+.wvs__count {
+  flex: 0 0 auto;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.wvs__panel-content {
+  padding: 0 1rem;
+}
+
+.wvs__list,
+.wvs__skill-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wvs__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 0.875rem 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.wvs__item:last-child {
+  border-bottom: 0;
+}
+
+.wvs__file-mark {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.5rem;
+  min-height: 1.75rem;
+  margin-top: 0.125rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.375rem;
+  color: var(--color-muted-foreground);
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.wvs__file-details {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 0.375rem;
+  min-width: 0;
+}
+
+.wvs__filename {
+  color: var(--color-foreground);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.wvs__filename-button {
+  display: block;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wvs__filename-button:hover {
+  text-decoration: underline;
+}
+
+.wvs__filename-button:focus-visible {
+  outline: 2px solid var(--color-ring, var(--color-primary));
+  outline-offset: 2px;
+}
+
+.wvs__filesize {
+  color: var(--color-muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.wvs__empty {
+  margin: 0;
+  padding: 1.25rem 0;
+  color: var(--color-muted-foreground);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.wvs__loading {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem 0;
+}
+
+.wvs__skeleton {
+  display: block;
+  width: 100%;
+  height: 1.25rem;
+  border-radius: 0.25rem;
+  background: var(--color-muted);
+  opacity: 0.7;
+}
+
+.wvs__skeleton--short {
+  width: 72%;
+}
+
+.wvs__skills {
+  margin-top: 1rem;
+}
+
+.wvs__skills-content {
+  padding: 0 1rem 1rem;
+}
+
+.wvs__references {
+  margin-top: 1rem;
+}
+
+.wvs__references-content {
+  padding: 0 1rem 1rem;
+}
+
+.wvs__reference-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wvs__reference-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.875rem 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.wvs__reference-details {
+  display: grid;
+  gap: 0.375rem;
+  min-width: 0;
+}
+
+.wvs__reference-platform {
+  color: var(--color-muted-foreground);
+  font-size: 0.6875rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.wvs__reference-link {
+  color: var(--color-primary);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.wvs__reference-note {
+  margin: 0;
+  color: var(--color-muted-foreground);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.wvs__reference-form {
+  display: grid;
+  gap: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.wvs__reference-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.wvs__remove {
+  flex: 0 0 auto;
+  align-self: center;
+}
+
+.wvs__remove:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.wvs__skill-list {
+  margin: 0.25rem 0 1rem;
+}
+
+.wvs__skill-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--color-border);
+  overflow-wrap: anywhere;
+}
+
+.wvs__skill-item strong {
+  font-size: 0.875rem;
+}
+
+.wvs__skill-item span,
+.wvs__skill-form small {
+  color: var(--color-muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.wvs__skill-form {
+  display: grid;
+  grid-template-columns: minmax(12rem, 0.8fr) minmax(18rem, 1.2fr);
+  gap: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.wvs__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  min-width: 0;
+}
+
+.wvs__field--full,
+.wvs__skill-actions {
+  grid-column: 1 / -1;
+}
+
+.wvs__field label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.wvs__skill-form input,
+.wvs__skill-form textarea,
+.wvs__reference-form input,
+.wvs__reference-form textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius, 0.5rem);
+  background: var(--color-background, var(--color-card));
+  color: var(--color-foreground);
+  font: inherit;
+  font-size: 0.875rem;
+}
+
+.wvs__skill-form textarea {
+  min-height: 10rem;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.wvs__reference-form textarea {
+  min-height: 5rem;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.wvs__skill-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.wvs__skill-notice {
+  min-height: 1.25rem;
+  margin: 0;
+  color: var(--color-muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.wvs__skill-notice--success {
+  color: var(--color-primary);
+}
+
+.wvs__overlay {
+  position: fixed;
+  z-index: 10000;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.68);
+}
+
+.wvs__dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  width: min(64rem, 100%);
+  max-height: 92vh;
+  overflow: auto;
+  padding: 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: calc(var(--radius, 0.5rem) + 0.25rem);
+  background: var(--color-card);
+  color: var(--color-card-foreground);
+  box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.35);
+}
+
+.wvs__dialog:focus {
+  outline: 2px solid var(--color-ring, var(--color-primary));
+  outline-offset: 2px;
+}
+
+.wvs__dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.wvs__dialog-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.wvs__video {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 70vh;
+  align-self: center;
+  border-radius: var(--radius, 0.5rem);
+  background: #000;
+  object-fit: contain;
+}
+
+.wvs__player-status,
+.wvs__player-error,
+.wvs__player-note {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.wvs__player-status,
+.wvs__player-note {
+  color: var(--color-muted-foreground);
+}
+
+.wvs__footnote {
+  margin: 1rem 0 0;
+  color: var(--color-muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.wvs__workspace {
+  box-sizing: border-box;
+  display: grid;
+  gap: 1rem;
+  width: 100%;
+  max-width: 76rem;
+  padding: 1.5rem;
+  color: var(--color-foreground);
+}
+
+.wvs__workspace *,
+.wvs__workspace *::before,
+.wvs__workspace *::after {
+  box-sizing: border-box;
+}
+
+.wvs__workspace-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+.wvs__content-back {
+  justify-self: start;
+}
+
+.wvs__content-heading h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 650;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.wvs__content-heading .wvs__eyebrow {
+  margin-bottom: 0.375rem;
+}
+
+.wvs__content-drafts {
+  margin-top: 0;
+}
+
+.wvs__content-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.wvs__content-form input,
+.wvs__content-form textarea,
+.wvs__content-form select {
+  width: 100%;
+  min-width: 0;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius, 0.5rem);
+  background: var(--color-background, var(--color-card));
+  color: var(--color-foreground);
+  font: inherit;
+  font-size: 0.875rem;
+}
+
+.wvs__content-form textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.wvs__content-form input:focus-visible,
+.wvs__content-form textarea:focus-visible,
+.wvs__content-form select:focus-visible,
+.wvs__content-back:focus-visible,
+.wvs__content-form button:focus-visible {
+  outline: 2px solid var(--color-ring, var(--color-primary));
+  outline-offset: 2px;
+}
+
+.wvs__field-hint,
+.wvs__reference-hint,
+.wvs__content-date {
+  margin: 0;
+  color: var(--color-muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.wvs__status,
+.wvs__error {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.wvs__status {
+  color: var(--color-muted-foreground);
+}
+
+.wvs__error {
+  padding: 0.75rem;
+  border: 1px solid var(--color-destructive);
+  border-radius: var(--radius, 0.5rem);
+  color: var(--color-destructive);
+}
+
+.wvs__error p {
+  margin: 0 0 0.5rem;
+}
+
+.wvs__content-subheading {
+  margin: 1rem 0 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.wvs__content-reference-list,
+.wvs__observation-list {
+  display: grid;
+  gap: 0.625rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wvs__content-reference {
+  display: grid;
+  gap: 0.375rem;
+  min-width: 0;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.wvs__content-reference a {
+  color: var(--color-primary);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.wvs__observation-list {
+  gap: 0.25rem;
+  padding-left: 1.125rem;
+  list-style: disc;
+  color: var(--color-muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.wvs__reference-observations,
+.wvs__content-snapshot {
+  min-width: 0;
+  color: var(--color-muted-foreground);
+  font-size: 0.75rem;
+}
+
+.wvs__reference-observations summary,
+.wvs__content-snapshot summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.wvs__reference-observations .wvs__observation-list,
+.wvs__content-snapshot .wvs__observation-list {
+  margin-top: 0.5rem;
+}
+
+.wvs__reference-hint {
+  margin-top: 0.75rem;
+}
+
+.wvs__content-draft-list {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+}
+
+.wvs__content-draft {
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius, 0.5rem);
+}
+
+.wvs__content-draft-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.wvs__content-draft-heading h3 {
+  margin: 0;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.wvs__content-format {
+  flex: 0 0 auto;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-muted-foreground);
+  font-size: 0.6875rem;
+}
+
+.wvs__content-date {
+  margin-top: 0.375rem;
+}
+
+.wvs__content-concept,
+.wvs__content-text p {
+  margin: 0.75rem 0 0;
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.wvs__content-text h4,
+.wvs__content-snapshot h4 {
+  margin: 0.75rem 0 0;
+  font-size: 0.8125rem;
+}
+
+.wvs__content-snapshot {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.wvs__content-snapshot .wvs__content-reference-list {
+  margin-top: 0.5rem;
+}
+
+@media (max-width: 48rem) {
+  .wvs__workspace {
+    padding: 1rem;
+  }
+
+  .wvs__workspace-grid,
+  .wvs__content-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .wvs {
+    padding: 1rem;
+  }
+
+  .wvs__header {
+    flex-direction: column;
+  }
+
+  .wvs__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .wvs__skill-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .wvs__field--full,
+  .wvs__skill-actions {
+    grid-column: auto;
+  }
+
+  .wvs__skill-actions,
+  .wvs__reference-actions {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .wvs__dialog-header {
+    align-items: flex-start;
+  }
+}
+
+.wvs__moment-workspace {
+  margin-bottom: 1rem;
+}
+
+.wvs__moment-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(18rem, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+  padding: 1rem;
+}
+
+.wvs__video-player,
+.wvs__moment-sidebar {
+  min-width: 0;
+}
+
+.wvs__waiting-video {
+  display: block;
+  width: 100%;
+  max-height: 72vh;
+  aspect-ratio: 16 / 9;
+  border: 0;
+  border-radius: var(--radius, 0.5rem);
+  background: #000;
+}
+
+.wvs__video-player .wvs__reference-hint {
+  margin-top: 0.5rem;
+}
+
+.wvs__moment-sidebar {
+  display: grid;
+  gap: 1rem;
+}
+
+.wvs__current-time {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius, 0.5rem);
+  color: var(--color-muted-foreground);
+  font-size: 0.8125rem;
+}
+
+.wvs__current-time time {
+  color: var(--color-foreground);
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+.wvs__moment-form {
+  display: grid;
+  gap: 0.875rem;
+}
+
+.wvs__moment-form textarea,
+.wvs__moment-form select {
+  width: 100%;
+  min-width: 0;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius, 0.5rem);
+  background: var(--color-background, var(--color-card));
+  color: var(--color-foreground);
+  font: inherit;
+  font-size: 0.875rem;
+}
+
+.wvs__moment-form textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.wvs__moment-form textarea:focus-visible,
+.wvs__moment-form select:focus-visible,
+.wvs__moment-seek:focus-visible,
+.wvs__moment-add:focus-visible {
+  outline: 2px solid var(--color-ring, var(--color-primary));
+  outline-offset: 2px;
+}
+
+.wvs__moment-list {
+  display: grid;
+  gap: 0.625rem;
+  max-height: 24rem;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.wvs__moment-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: start;
+  padding: 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius, 0.5rem);
+}
+
+.wvs__moment-seek,
+.wvs__moment-add {
+  border: 0;
+  background: transparent;
+  color: var(--color-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.wvs__moment-seek {
+  padding: 0.25rem 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.wvs__moment-details p {
+  margin: 0.375rem 0 0.5rem;
+  overflow-wrap: anywhere;
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+.wvs__moment-add {
+  padding: 0;
+  font-size: 0.75rem;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.wvs__stream-unavailable {
+  padding: 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius, 0.5rem);
+  background: var(--color-muted);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.wvs__stream-unavailable p {
+  margin: 0.5rem 0 0;
+  color: var(--color-muted-foreground);
+}
+
+.wvs__video-error {
+  margin: 0.5rem 0 0;
+  color: var(--color-destructive);
+  font-size: 0.8125rem;
+}
+
+@media (max-width: 48rem) {
+  .wvs__moment-layout {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 0.75rem;
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "waiting-studio",
+  "label": "Montage vidéo",
+  "description": "Inventaire vidéo, lecteur Finish et skills personnalisés locaux.",
+  "icon": "Film",
+  "version": "0.1.0",
+  "tab": {
+    "path": "/montage-video",
+    "position": "after:skills"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}
