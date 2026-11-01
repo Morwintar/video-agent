@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
 import re
+import secrets
 import stat
 import subprocess
 import tempfile
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -17,7 +20,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 
 router = APIRouter()
@@ -49,6 +52,11 @@ _CONTENT_LOCK = threading.Lock()
 _THUMBNAIL_GENERATION_LOCK = threading.BoundedSemaphore(2)
 _MAX_THUMBNAIL_BYTES = 2_000_000
 _THUMBNAIL_CACHE_ENTRIES = 128
+_STREAM_TICKET_TTL_SECONDS = 900
+_MAX_STREAM_TICKETS = 256
+_STREAM_TICKET_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
+_STREAM_TICKET_LOCK = threading.Lock()
+_STREAM_TICKETS: dict[str, dict[str, Any]] = {}
 _REFERENCE_OBSERVATION_ITEMS = (
     ("hook", "Accroche et moment fort dans les premières secondes."),
     ("pacing", "Rythme, durée des plans et transitions."),
@@ -428,6 +436,59 @@ def _resolve_waiting_video(root: Path, filename: str) -> Path | None:
 def _resolve_reference_video(root: Path, filename: str) -> Path | None:
     """Resolve a regular MP4 anywhere beneath References without following symlinks."""
     return _resolve_video_in_folder(root, "References", filename)
+
+
+def _video_file_identity(path: Path) -> tuple[int, int, int, int]:
+    metadata = path.stat()
+    return (metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns)
+
+
+def _stream_ticket_key(ticket_id: str) -> str | None:
+    if not isinstance(ticket_id, str) or not _STREAM_TICKET_RE.fullmatch(ticket_id):
+        return None
+    return hashlib.sha256(ticket_id.encode("ascii")).hexdigest()
+
+
+def _lookup_stream_ticket(ticket_id: str) -> tuple[dict[str, Any] | None, bool]:
+    """Return an unexpired ticket and whether a known ticket expired."""
+    key = _stream_ticket_key(ticket_id)
+    if key is None:
+        return None, False
+    now = time.monotonic()
+    with _STREAM_TICKET_LOCK:
+        record = _STREAM_TICKETS.get(key)
+        if record is None:
+            return None, False
+        if record["expiresAt"] <= now:
+            _STREAM_TICKETS.pop(key, None)
+            return None, True
+        return dict(record), False
+
+
+def _prune_stream_tickets(now: float) -> None:
+    expired = [
+        key for key, record in _STREAM_TICKETS.items()
+        if record["expiresAt"] <= now
+    ]
+    for key in expired:
+        _STREAM_TICKETS.pop(key, None)
+
+
+def _resolve_stream_ticket_video(record: dict[str, Any]) -> Path | None:
+    folder_id = record.get("folderId")
+    filename = record.get("filename")
+    if not isinstance(folder_id, str) or not isinstance(filename, str):
+        return None
+    folder_label = dict(FOLDERS).get(folder_id)
+    if folder_label is None:
+        return None
+    path = _resolve_video_in_folder(_media_root(), folder_label, filename)
+    if path is None:
+        return None
+    try:
+        return path if _video_file_identity(path) == record.get("fileIdentity") else None
+    except OSError:
+        return None
 
 
 def _resolve_hvc1_compat_video(root: Path, filename: str) -> Path | None:
@@ -1018,6 +1079,120 @@ def get_waiting_video(filename: str, codec: str = "source") -> FileResponse:
         filename=source_path.name,
         stat_result=path.stat(),
         content_disposition_type="inline",
+    )
+
+
+@router.post("/video-tickets", status_code=201)
+def create_video_ticket(payload: dict[str, Any], request: Request, response: Response) -> dict[str, Any]:
+    """Mint a short-lived, single-file playback capability for the Desktop player."""
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    folder_id = payload.get("folderId")
+    folder_label = dict(FOLDERS).get(folder_id) if isinstance(folder_id, str) else None
+    filename = payload.get("filename")
+    if folder_label is None:
+        raise HTTPException(status_code=422, detail="Invalid video folder")
+    if not isinstance(filename, str):
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    video_path = _resolve_video_in_folder(_media_root(), folder_label, filename)
+    if video_path is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+    try:
+        file_identity = _video_file_identity(video_path)
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail="Video not found") from exc
+
+    ticket_id = secrets.token_urlsafe(32)
+    ticket_key = _stream_ticket_key(ticket_id)
+    if ticket_key is None:
+        raise RuntimeError("generated invalid playback ticket")
+    now = time.monotonic()
+    with _STREAM_TICKET_LOCK:
+        _prune_stream_tickets(now)
+        if len(_STREAM_TICKETS) >= _MAX_STREAM_TICKETS:
+            raise HTTPException(status_code=503, detail="Playback is temporarily unavailable")
+        _STREAM_TICKETS[ticket_key] = {
+            "folderId": folder_id,
+            "filename": filename,
+            "fileIdentity": file_identity,
+            "expiresAt": now + _STREAM_TICKET_TTL_SECONDS,
+        }
+
+    stream_url = request.url_for("video_agent_stream").include_query_params(ticket=ticket_id)
+    return {
+        "ticketId": ticket_id,
+        "streamUrl": str(stream_url),
+        "expiresInSeconds": _STREAM_TICKET_TTL_SECONDS,
+    }
+
+
+@router.post("/video-tickets/renew")
+def renew_video_ticket(payload: dict[str, Any]) -> dict[str, int]:
+    """Extend a ticket only while its original, unchanged video is still allowlisted."""
+    ticket_id = payload.get("ticketId")
+    if not isinstance(ticket_id, str):
+        raise HTTPException(status_code=404, detail="Playback ticket is unavailable")
+    ticket_key = _stream_ticket_key(ticket_id)
+    if ticket_key is None:
+        raise HTTPException(status_code=404, detail="Playback ticket is unavailable")
+    record, expired = _lookup_stream_ticket(ticket_id)
+    if record is None:
+        raise HTTPException(status_code=410 if expired else 404, detail="Playback ticket is unavailable")
+    if _resolve_stream_ticket_video(record) is None:
+        with _STREAM_TICKET_LOCK:
+            _STREAM_TICKETS.pop(ticket_key, None)
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    now = time.monotonic()
+    with _STREAM_TICKET_LOCK:
+        current = _STREAM_TICKETS.get(ticket_key)
+        if current is None or current["expiresAt"] <= now:
+            _STREAM_TICKETS.pop(ticket_key, None)
+            raise HTTPException(status_code=410, detail="Playback ticket is unavailable")
+        current["expiresAt"] = now + _STREAM_TICKET_TTL_SECONDS
+    return {"expiresInSeconds": _STREAM_TICKET_TTL_SECONDS}
+
+
+@router.post("/video-tickets/revoke")
+def revoke_video_ticket(payload: dict[str, Any]) -> dict[str, bool]:
+    """Revoke a Desktop playback capability; expired or repeated revocation is harmless."""
+    ticket_id = payload.get("ticketId")
+    if not isinstance(ticket_id, str):
+        raise HTTPException(status_code=404, detail="Playback ticket is unavailable")
+    ticket_key = _stream_ticket_key(ticket_id)
+    if ticket_key is None:
+        raise HTTPException(status_code=404, detail="Playback ticket is unavailable")
+    with _STREAM_TICKET_LOCK:
+        revoked = _STREAM_TICKETS.pop(ticket_key, None) is not None
+    return {"revoked": revoked}
+
+
+@router.get("/videos/stream", name="video_agent_stream")
+def stream_video_with_ticket(ticket: str) -> FileResponse:
+    """Range-stream the exact MP4 bound to a current short-lived ticket."""
+    record, expired = _lookup_stream_ticket(ticket)
+    if record is None:
+        raise HTTPException(status_code=410 if expired else 404, detail="Playback ticket is unavailable")
+    video_path = _resolve_stream_ticket_video(record)
+    if video_path is None:
+        ticket_key = _stream_ticket_key(ticket)
+        if ticket_key is not None:
+            with _STREAM_TICKET_LOCK:
+                _STREAM_TICKETS.pop(ticket_key, None)
+        raise HTTPException(status_code=404, detail="Video not found")
+    metadata = video_path.stat()
+    return FileResponse(
+        video_path,
+        media_type="video/mp4",
+        filename=video_path.name,
+        stat_result=metadata,
+        content_disposition_type="inline",
+        headers={
+            "Cache-Control": "private, no-store",
+            "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 

@@ -3,6 +3,20 @@
 Les changements notables du projet sont consignés ici. Les versions suivent
 [SemVer](https://semver.org/).
 
+## [0.3.0] - 2026-11-01
+
+### Added
+- Lecteur MP4 intégré dans les trois sections Desktop; contrôles natifs, seek et insertion du timecode courant dans un repère.
+- Tickets de lecture temporaires, limités à un seul fichier et renouvelés/révoqués par l’interface.
+
+### Changed
+- Les repères cliquables repositionnent la vidéo; boutons et états du lecteur utilisent le UI kit Hermes Desktop.
+- Documentation et versions synchronisées à `0.3.0`.
+
+### Security
+- Ticket aléatoire limité à 15 minutes, stocké sous forme de hash côté serveur; flux limité au fichier autorisé, avec Range et réponses `no-store`/`no-referrer`.
+- Renouvellement/révocation acceptent le ticket dans le corps JSON plutôt que dans le chemin d’URL.
+
 ## [0.2.0] - 2026-11-01
 
 ### Added

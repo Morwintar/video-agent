@@ -1,4 +1,4 @@
-import { ROUTES_AREA, SIDEBAR_NAV_AREA, useQuery, useMutation, useQueryClient } from '@hermes/plugin-sdk'
+import { Button, ROUTES_AREA, SIDEBAR_NAV_AREA, useQuery, useMutation, useQueryClient } from '@hermes/plugin-sdk'
 import * as React from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
@@ -103,24 +103,114 @@ function VideoList({ videos, selectedName, onSelect, search }) {
   })
 }
 
-function ReadOnlyVideoList({ videos }) {
-  if (!videos.length) return jsx('p', { className: 'py-4 text-sm text-(--ui-text-tertiary)', children: 'Aucun MP4 local dans References.' })
-  return jsx('ul', {
-    className: 'flex max-h-[50vh] flex-col gap-1 overflow-auto',
-    role: 'list',
-    children: videos.map(video => jsxs('li', {
-      className: 'flex flex-col gap-1 rounded-md border border-(--ui-stroke-secondary) px-3 py-2',
-      children: [jsx('span', { className: 'break-all text-sm text-(--ui-text-secondary)', children: video.name }), video.sizeBytes !== undefined ? jsx('span', { className: 'text-xs text-(--ui-text-quaternary)', children: formatBytes(video.sizeBytes) }) : null],
-    }, video.name)),
+function PlaybackPanel({ rest, scheduleInterval, folderId, video, onTimeUpdate, seekTime }) {
+  const [renewalError, setRenewalError] = React.useState('')
+  const playerRef = React.useRef(null)
+  const restoreTimeRef = React.useRef(0)
+  const ticketQuery = useQuery({
+    queryKey: [...QUERY_ROOT, 'stream', folderId, video.name],
+    queryFn: () => rest('/video-tickets', {
+      method: 'POST',
+      body: { folderId, filename: video.name },
+    }),
+    enabled: Boolean(video),
+    staleTime: 0,
+    retry: false,
+  })
+  const ticket = ticketQuery.data
+  const lifecycleRef = React.useRef(0)
+  const currentTicketRef = React.useRef(ticket?.ticketId)
+  currentTicketRef.current = ticket?.ticketId
+
+  React.useEffect(() => {
+    if (!ticket?.ticketId) return undefined
+    lifecycleRef.current += 1
+    const effectGeneration = lifecycleRef.current
+    let active = true
+    const disposeInterval = scheduleInterval(async () => {
+      try {
+        await rest('/video-tickets/renew', { method: 'POST', body: { ticketId: ticket.ticketId } })
+        if (active) setRenewalError('')
+      } catch (_error) {
+        if (active) {
+          setRenewalError('La session de lecture doit être renouvelée.')
+          restoreTimeRef.current = Number(playerRef.current?.currentTime) || 0
+          ticketQuery.refetch()
+        }
+      }
+    }, Math.max(60_000, Math.floor((ticket.expiresInSeconds || 900) * 600)))
+    return () => {
+      active = false
+      disposeInterval()
+      Promise.resolve().then(() => {
+        if (currentTicketRef.current !== ticket.ticketId || lifecycleRef.current === effectGeneration) {
+          rest('/video-tickets/revoke', { method: 'POST', body: { ticketId: ticket.ticketId } }).catch(() => {})
+        }
+      }).catch(() => {})
+    }
+  }, [rest, scheduleInterval, ticket?.ticketId, ticket?.expiresInSeconds])
+
+  React.useEffect(() => {
+    const player = playerRef.current
+    if (player && typeof seekTime === 'number' && player.readyState >= 1) player.currentTime = seekTime
+  }, [seekTime, ticket?.ticketId])
+
+  function retryStream() {
+    restoreTimeRef.current = Number(playerRef.current?.currentTime) || 0
+    setRenewalError('')
+    ticketQuery.refetch()
+  }
+
+  if (!ticket && ticketQuery.isLoading) {
+    return jsx('div', { className: 'flex aspect-video items-center justify-center rounded-md border border-(--ui-stroke-secondary) text-sm text-(--ui-text-tertiary)', role: 'status', children: 'Préparation du flux vidéo…' })
+  }
+  if (!ticket && ticketQuery.error) {
+    return jsxs('div', {
+      className: 'flex aspect-video flex-col items-center justify-center gap-3 rounded-md border border-(--ui-stroke-secondary) p-4 text-sm text-(--ui-text-secondary)',
+      role: 'alert',
+      children: [jsx('span', { children: errorText(ticketQuery.error, 'Le flux vidéo n’a pas pu être préparé.') }), jsx(Button, { type: 'button', onClick: () => ticketQuery.refetch(), children: 'Réessayer' })],
+    })
+  }
+
+  return jsxs('div', {
+    className: 'flex flex-col gap-2',
+    children: [
+      ticket?.streamUrl ? jsx('video', {
+        key: ticket.ticketId,
+        ref: playerRef,
+        className: 'aspect-video w-full rounded-md border border-(--ui-stroke-secondary) bg-black/80 object-contain',
+        src: ticket.streamUrl,
+        controls: true,
+        preload: 'metadata',
+        playsInline: true,
+        referrerPolicy: 'no-referrer',
+        'aria-label': `Lecture de ${video.name}`,
+        onTimeUpdate: event => onTimeUpdate?.(Number(event.currentTarget.currentTime) || 0),
+        onLoadedMetadata: event => {
+          const targetTime = restoreTimeRef.current > 0 ? restoreTimeRef.current : seekTime
+          if (typeof targetTime === 'number') {
+            event.currentTarget.currentTime = targetTime
+            restoreTimeRef.current = 0
+          }
+        },
+        onError: () => setRenewalError('La lecture est interrompue. Réessaie le flux.'),
+      }) : jsx('div', { className: 'flex aspect-video items-center justify-center rounded-md border border-(--ui-stroke-secondary) text-sm text-(--ui-text-tertiary)', role: 'status', children: 'Le flux vidéo est indisponible.' }),
+      jsxs('div', {
+        className: 'flex flex-wrap items-center justify-between gap-2 text-xs text-(--ui-text-tertiary)',
+        children: [jsx('span', { children: renewalError || 'Lecture progressive · session limitée à cette vidéo' }), jsx(Button, { type: 'button', onClick: retryStream, children: 'Renouveler le flux' })],
+      }),
+    ],
   })
 }
 
-function MomentWorkspace({ rest, video, contentQuery }) {
+function MomentWorkspace({ rest, scheduleInterval, video, contentQuery, currentFolderId }) {
   const queryClient = useQueryClient()
   const [timecode, setTimecode] = React.useState('')
   const [note, setNote] = React.useState('')
   const [targetFormat, setTargetFormat] = React.useState('both')
   const [validationError, setValidationError] = React.useState('')
+  const [currentTime, setCurrentTime] = React.useState(0)
+  const [seekTime, setSeekTime] = React.useState(null)
   const moments = Array.isArray(contentQuery.data?.moments) ? contentQuery.data.moments : []
   const momentMutation = useMutation({
     mutationFn: payload => rest(`/content/${encodeURIComponent(video.name)}/moments`, { method: 'POST', body: payload }),
@@ -160,15 +250,15 @@ function MomentWorkspace({ rest, video, contentQuery }) {
   return jsxs('div', {
     className: 'flex min-h-0 flex-col gap-4',
     children: [
-      jsx('div', { className: 'rounded-md border border-(--ui-stroke-secondary) p-3 text-xs text-(--ui-text-tertiary)', children: 'La lecture intégrée attend le pont de streaming authentifié du client Hermes. En attendant, saisis le timecode observé dans ton lecteur habituel; les fichiers source restent en lecture seule.' }),
+      jsx(PlaybackPanel, { rest, scheduleInterval, folderId: currentFolderId, video, onTimeUpdate: setCurrentTime, seekTime }),
       jsxs('form', {
         className: 'grid grid-cols-1 gap-3 md:grid-cols-[10rem_minmax(0,1fr)_9rem_auto]',
         onSubmit: submitMoment,
         children: [
-          jsx('div', { className: 'flex flex-col gap-1', children: [jsx('label', { className: 'text-xs text-(--ui-text-secondary)', htmlFor: 'agent-editor-timecode', children: 'Timecode' }), jsx('input', { id: 'agent-editor-timecode', className: fieldClass(), value: timecode, onChange: event => setTimecode(event.target.value), placeholder: '00:32 ou 00:01:12', inputMode: 'text', autoComplete: 'off' })] }),
+          jsx('div', { className: 'flex flex-col gap-1', children: [jsx('label', { className: 'text-xs text-(--ui-text-secondary)', htmlFor: 'agent-editor-timecode', children: 'Timecode' }), jsx('input', { id: 'agent-editor-timecode', className: fieldClass(), value: timecode, onChange: event => setTimecode(event.target.value), placeholder: '00:32 ou 00:01:12', inputMode: 'text', autoComplete: 'off' }), jsx(Button, { type: 'button', onClick: () => setTimecode(formatTimecode(currentTime)), children: 'Prendre la position' })] }),
           jsx('div', { className: 'flex flex-col gap-1', children: [jsx('label', { className: 'text-xs text-(--ui-text-secondary)', htmlFor: 'agent-editor-note', children: 'À retenir' }), jsx('input', { id: 'agent-editor-note', className: fieldClass(), value: note, onChange: event => setNote(event.target.value), maxLength: 500, placeholder: 'Ex. réaction forte, accroche, payoff…' })] }),
           jsx('div', { className: 'flex flex-col gap-1', children: [jsx('label', { className: 'text-xs text-(--ui-text-secondary)', htmlFor: 'agent-editor-target', children: 'Cible' }), jsx('select', { id: 'agent-editor-target', className: fieldClass(), value: targetFormat, onChange: event => setTargetFormat(event.target.value), children: [jsx('option', { value: 'both', children: 'Les deux' }), jsx('option', { value: 'short', children: 'Short' }), jsx('option', { value: 'video', children: 'Vidéo' })] })] }),
-          jsx('div', { className: 'flex items-end', children: jsx('button', { type: 'submit', className: buttonClass(true), disabled: momentMutation.isPending, children: momentMutation.isPending ? 'Enregistrement…' : 'Ajouter le repère' }) }),
+          jsx('div', { className: 'flex items-end', children: jsx(Button, { type: 'submit', disabled: momentMutation.isPending, children: momentMutation.isPending ? 'Enregistrement…' : 'Ajouter le repère' }) }),
         ],
       }),
       validationError || momentMutation.error ? jsx('p', { className: 'text-sm text-(--ui-text-secondary)', role: 'alert', children: validationError || errorText(momentMutation.error, 'Le repère n’a pas pu être enregistré.') }) : null,
@@ -180,7 +270,7 @@ function MomentWorkspace({ rest, video, contentQuery }) {
           className: 'flex min-h-0 flex-col gap-2 overflow-auto',
           children: [...moments].sort((left, right) => left.timeSeconds - right.timeSeconds).map(moment => jsxs('li', {
             className: 'grid grid-cols-[7.5rem_minmax(0,1fr)_5rem] gap-3 border-b border-(--ui-stroke-secondary) py-2 text-sm',
-            children: [jsx('span', { className: 'font-mono text-(--ui-accent)', children: formatTimecode(moment.timeSeconds) }), jsx('span', { className: 'break-words text-foreground', children: moment.note }), jsx('span', { className: 'text-right text-xs text-(--ui-text-tertiary)', children: moment.targetFormat === 'both' ? 'Les deux' : moment.targetFormat === 'short' ? 'Short' : 'Vidéo' })],
+            children: [jsx('button', { type: 'button', className: 'font-mono text-(--ui-accent) underline-offset-4 hover:underline', onClick: () => setSeekTime(moment.timeSeconds), 'aria-label': `Aller à ${formatTimecode(moment.timeSeconds)}`, children: formatTimecode(moment.timeSeconds) }), jsx('span', { className: 'break-words text-foreground', children: moment.note }), jsx('span', { className: 'text-right text-xs text-(--ui-text-tertiary)', children: moment.targetFormat === 'both' ? 'Les deux' : moment.targetFormat === 'short' ? 'Short' : 'Vidéo' })],
           }, moment.id)),
         }) : jsx('p', { className: 'py-4 text-sm text-(--ui-text-tertiary)', children: 'Pas encore de repère pour cette vidéo.' }),
       }),
@@ -188,7 +278,7 @@ function MomentWorkspace({ rest, video, contentQuery }) {
   })
 }
 
-function ReferenceLibrary({ rest, openExternal, localVideos, referencesQuery }) {
+function ReferenceLibrary({ rest, scheduleInterval, openExternal, localVideos, selectedVideo, referencesQuery }) {
   const queryClient = useQueryClient()
   const [url, setUrl] = React.useState('')
   const [note, setNote] = React.useState('')
@@ -243,15 +333,17 @@ function ReferenceLibrary({ rest, openExternal, localVideos, referencesQuery }) 
         ],
       }),
       jsx(Panel, {
-        title: `Vidéos de référence · ${localVideos.length}`,
-        description: 'Les MP4 du dossier References sont listés en lecture seule.',
-        children: jsx(ReadOnlyVideoList, { videos: localVideos }),
+        title: `Vidéo de référence · ${localVideos.length}`,
+        description: selectedVideo?.name || 'Sélectionne un MP4 dans la bibliothèque pour le lire.',
+        children: selectedVideo
+          ? jsx(PlaybackPanel, { rest, scheduleInterval, folderId: 'references', video: selectedVideo })
+          : jsx('p', { className: 'py-4 text-sm text-(--ui-text-tertiary)', children: 'Aucune vidéo MP4 locale à lire.' }),
       }),
     ],
   })
 }
 
-function AgentEditorPage({ rest, openExternal }) {
+function AgentEditorPage({ rest, scheduleInterval, openExternal }) {
   const [activeFolder, setActiveFolder] = React.useState('waiting')
   const [selectedName, setSelectedName] = React.useState('')
   const [search, setSearch] = React.useState('')
@@ -318,10 +410,17 @@ function AgentEditorPage({ rest, openExternal }) {
             children: [jsx('input', { className: fieldClass(), type: 'search', value: search, onChange: event => setSearch(event.target.value), placeholder: 'Filtrer les vidéos…', 'aria-label': 'Filtrer les vidéos' }), jsx(VideoList, { videos, selectedName: selectedVideo?.name || '', onSelect: setSelectedName, search })],
           }),
           activeFolder === 'references'
-            ? jsx('div', { className: 'min-h-0 xl:col-span-2', children: jsx(ReferenceLibrary, { rest, openExternal, localVideos: localReferenceVideos, referencesQuery }) })
+            ? jsx('div', { className: 'min-h-0 xl:col-span-2', children: jsx(ReferenceLibrary, { rest, scheduleInterval, openExternal, localVideos: localReferenceVideos, selectedVideo, referencesQuery }) })
             : activeFolder === 'waiting' && selectedVideo
-              ? jsx(Panel, { title: selectedVideo.name, description: 'Workspace Waiting', className: 'min-h-[16rem] xl:col-span-2', children: jsx(MomentWorkspace, { rest, video: selectedVideo, contentQuery }) })
-              : jsx(Panel, { title: selectedVideo ? selectedVideo.name : 'Aucune vidéo sélectionnée', description: 'Workspace Finish', className: 'min-h-[16rem] xl:col-span-2', children: jsx('p', { className: 'py-4 text-sm text-(--ui-text-tertiary)', children: selectedVideo ? 'Les vidéos terminées restent en lecture seule. Les repères se créent dans À traiter.' : 'Ajoute des vidéos MP4 dans Finish pour les retrouver ici.' }) }),
+              ? jsx(Panel, { title: selectedVideo.name, description: 'Workspace Waiting · lecture progressive', className: 'min-h-[16rem] xl:col-span-2', children: jsx(MomentWorkspace, { rest, scheduleInterval, video: selectedVideo, contentQuery, currentFolderId: activeFolder }) })
+              : jsx(Panel, {
+                title: selectedVideo ? selectedVideo.name : 'Aucune vidéo sélectionnée',
+                description: 'Workspace Finish · lecture seule',
+                className: 'min-h-[16rem] xl:col-span-2',
+                children: selectedVideo
+                  ? jsx(PlaybackPanel, { rest, scheduleInterval, folderId: activeFolder, video: selectedVideo })
+                  : jsx('p', { className: 'py-4 text-sm text-(--ui-text-tertiary)', children: 'Ajoute des vidéos MP4 dans Finish pour les retrouver ici.' }),
+              }),
         ],
       }) : null,
     ],
@@ -332,14 +431,14 @@ export default {
   id: PLUGIN_ID,
   name: 'Agent Editor',
   register(ctx) {
+    const rest = (path, options) => ctx.rest(path, options)
+    const openExternal = url => ctx.os.openExternal(url)
+    const scheduleInterval = (callback, milliseconds) => ctx.setInterval(callback, milliseconds)
     ctx.register({
       id: 'agent-editor-page',
       area: ROUTES_AREA,
       data: { path: '/agent-editor' },
-      render: () => jsx(AgentEditorPage, {
-        rest: (path, options) => ctx.rest(path, options),
-        openExternal: url => ctx.os.openExternal(url),
-      }),
+      render: () => jsx(AgentEditorPage, { rest, scheduleInterval, openExternal }),
     })
     ctx.register({
       id: 'agent-editor-sidebar',

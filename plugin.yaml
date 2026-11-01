@@ -1,7 +1,7 @@
 name: video-agent
-version: 0.2.0
+version: 0.3.0
 manifest_version: 1
 kind: standalone
-description: "Agent Editor: organise Waiting, References et Finish; conserver localement les liens et repères vidéo."
+description: "Agent Editor: organiser et lire les MP4 locaux; conserver les liens, notes et repères vidéo."
 provides_tools: []
 provides_hooks: []

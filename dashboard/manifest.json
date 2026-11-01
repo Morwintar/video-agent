@@ -1,9 +1,9 @@
 {
   "name": "video-agent",
   "label": "Agent Editor",
-  "description": "Agent Editor pour les rediffusions Waiting, leurs repères, brouillons et clips locaux.",
+  "description": "Agent Editor pour organiser et lire les MP4 locaux, conserver leurs repères et préparer des clips.",
   "icon": "Film",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "tab": {
     "path": "/montage-video",
     "position": "after:skills"

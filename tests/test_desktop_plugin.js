@@ -35,9 +35,14 @@ let hookIndex = 0;
 const sampleVideo = { name: "records/waiting-vod.mp4", sizeBytes: 1024 };
 const sampleFolders = [
   { id: "waiting", label: "Waiting", available: true, count: 1, videos: [sampleVideo] },
-  { id: "references", label: "References", available: true, count: 0, videos: [] },
-  { id: "finish", label: "Finish", available: true, count: 0, videos: [] },
+  { id: "references", label: "References", available: true, count: 1, videos: [{ name: "vertical/style.mp4", sizeBytes: 512 }] },
+  { id: "finish", label: "Finish", available: true, count: 1, videos: [{ name: "exports/final.mp4", sizeBytes: 256 }] },
 ];
+const sampleTicket = {
+  ticketId: "a".repeat(43),
+  streamUrl: "http://127.0.0.1/api/plugins/video-agent/videos/stream?ticket=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  expiresInSeconds: 900,
+};
 sandbox.React = {
   useState(initialValue) {
     const componentStates = hookStates.get(currentComponent) || [];
@@ -47,13 +52,21 @@ sandbox.React = {
     return [componentStates[index], value => { componentStates[index] = value; }];
   },
   useEffect() {},
+  useRef(initialValue) {
+    return { current: initialValue };
+  },
 };
 sandbox.jsx = (type, props, key) => ({ type, props: props || {}, key });
 sandbox.jsxs = sandbox.jsx;
-sandbox.useQuery = ({ queryKey }) => {
+sandbox.Button = props => sandbox.jsx("button", props);
+const queryOptions = [];
+sandbox.useQuery = options => {
+  const { queryKey } = options;
+  queryOptions.push(options);
   if (queryKey[1] === "videos") return { data: { folders: sampleFolders }, isLoading: false, refetch() {} };
   if (queryKey[1] === "references") return { data: { references: [] }, isLoading: false, refetch() {} };
-  return { data: { moments: [] }, isLoading: false, error: null, refetch() {} };
+  if (queryKey[1] === "stream") return { data: sampleTicket, isLoading: false, error: null, refetch() {} };
+  return { data: { moments: [{ id: "moment-1", timeSeconds: 62.5, note: "Payoff", targetFormat: "both" }] }, isLoading: false, error: null, refetch() {} };
 };
 sandbox.useMutation = options => ({
   mutate(payload) {
@@ -71,7 +84,7 @@ plugin.register({
   register: (item) => registrations.push(item),
   rest: (url, options) => {
     apiCalls.push({ url, options });
-    return Promise.resolve({ moment: {}, reference: {} });
+    return Promise.resolve(url === "/video-tickets" ? sampleTicket : { moment: {}, reference: {} });
   },
   os: { openExternal() {} },
 });
@@ -119,8 +132,27 @@ assert.match(pageText, /Agent Editor/);
 assert.match(pageText, /À traiter/);
 assert.match(pageText, /waiting-vod\.mp4/);
 assert.match(pageText, /Repères/);
-
+const initialPlayer = findNode(page, node => node.type === "video");
+assert.ok(initialPlayer, "Selected video should open in the embedded player");
+assert.equal(initialPlayer.props.src, sampleTicket.streamUrl);
+assert.equal(initialPlayer.props.controls, true);
+initialPlayer.props.onTimeUpdate({ currentTarget: { currentTime: 123.4 } });
+page = renderPage();
+const takePositionButton = findNode(page, node => node.type === "button" && collectText(node).includes("Prendre la position"));
+assert.ok(takePositionButton, "The current player position should be available as a timecode");
+takePositionButton.props.onClick();
+page = renderPage();
 const timecodeInput = findNode(page, node => node.type === "input" && node.props.id === "agent-editor-timecode");
+assert.equal(timecodeInput.props.value, "00:02:03.400");
+const jumpToMomentButton = findNode(page, node => node.type === "button" && node.props["aria-label"] === "Aller à 00:01:02.500");
+assert.ok(jumpToMomentButton, "Saved timecodes should be seek controls");
+jumpToMomentButton.props.onClick();
+page = renderPage();
+const seekPlayer = findNode(page, node => node.type === "video");
+const metadataState = { currentTime: 0 };
+seekPlayer.props.onLoadedMetadata({ currentTarget: metadataState });
+assert.equal(metadataState.currentTime, 62.5);
+
 const momentNoteInput = findNode(page, node => node.type === "input" && node.props.id === "agent-editor-note");
 assert.ok(timecodeInput && momentNoteInput, "Moment editor controls should render");
 timecodeInput.props.onChange({ target: { value: "00:01:02.5" } });
@@ -134,6 +166,12 @@ assert.deepEqual(JSON.parse(JSON.stringify(apiCalls[0])), {
   options: { method: "POST", body: { timeSeconds: 62.5, note: "Bonne réaction", targetFormat: "both" } },
 });
 
+const finishTab = findNode(page, node => node.type === "button" && collectText(node).includes("Terminées"));
+assert.ok(finishTab, "Finish tab should render");
+finishTab.props.onClick();
+page = renderPage();
+assert.ok(findNode(page, node => node.type === "video" && node.props["aria-label"] === "Lecture de exports/final.mp4"), "Finish videos should also be playable");
+
 const referenceTab = findNode(page, node => node.type === "button" && collectText(node).includes("Références"));
 assert.ok(referenceTab, "References tab should render");
 referenceTab.props.onClick();
@@ -141,6 +179,7 @@ page = renderPage();
 const referenceUrlInput = findNode(page, node => node.type === "input" && node.props.id === "agent-editor-reference-url");
 const referenceNoteInput = findNode(page, node => node.type === "textarea" && node.props.id === "agent-editor-reference-note");
 assert.ok(referenceUrlInput && referenceNoteInput, "Reference controls should render");
+assert.ok(findNode(page, node => node.type === "video" && node.props["aria-label"] === "Lecture de vertical/style.mp4"), "Local reference videos should be playable");
 referenceUrlInput.props.onChange({ target: { value: "https://youtu.be/example" } });
 referenceNoteInput.props.onChange({ target: { value: "Rythme et cadrage" } });
 page = renderPage();
@@ -160,4 +199,18 @@ assert.equal(moduleStub.exports.parseTimecode("24:00:01"), null);
 assert.equal(moduleStub.exports.parseTimecode("00:00:00.1234"), null);
 assert.equal(moduleStub.exports.formatTimecode(3723.5), "01:02:03.500");
 
-console.log("Desktop plugin contract and timecode tests passed");
+(async () => {
+  const streamQuery = queryOptions.find(options => options.queryKey[1] === "stream" && options.queryKey[2] === "waiting");
+  assert.ok(streamQuery, "A one-video streaming ticket should be requested for the selected Waiting video");
+  assert.equal(streamQuery.queryKey[3], "records/waiting-vod.mp4");
+  const ticket = await streamQuery.queryFn();
+  assert.equal(ticket.ticketId, sampleTicket.ticketId);
+  assert.deepEqual(JSON.parse(JSON.stringify(apiCalls[2])), {
+    url: "/video-tickets",
+    options: { method: "POST", body: { folderId: "waiting", filename: "records/waiting-vod.mp4" } },
+  });
+  console.log("Desktop plugin contract, player, and timecode tests passed");
+})().catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});

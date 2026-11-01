@@ -16,13 +16,13 @@
 ## Fonctionnalités
 
 - **Bibliothèque `Waiting`** — inventaire récursif des MP4, avec miniatures générées à la demande par FFmpeg.
-- **Lecture progressive** — lecture et recherche dans les vidéos au moyen de requêtes HTTP Range, sans charger la VOD complète en mémoire.
+- **Lecture progressive dans Hermes Desktop** — lecteur intégré dans `Waiting`, `References` et `Finish`; la vidéo garde les contrôles et le seek natifs.
 - **Espace de travail par rediffusion** — repères horodatés, notes, brouillons Short/Vidéo et aperçu des clips MP4 correspondants déjà dans `Finish`.
 - **Références éditoriales** — liens HTTPS YouTube et TikTok, notes et liste de points d’observation (accroche, rythme, cadrage, sous-titres, audio et payoff). Les liens sont enregistrés, pas visités ni téléchargés.
 - **Skills locaux** — création de skills personnalisés conservés dans le dossier du plugin.
-- **Médias protégés** — les routes API utilisent l’authentification normale du Dashboard; les chemins de fichiers sont confinés aux dossiers prévus et les liens symboliques sont refusés.
-- **Section Hermes Desktop « Agent Editor »** — bibliothèque `Waiting` / `References` / `Finish`, ajout/retrait de liens YouTube/TikTok et création de repères horodatés depuis le client natif.
-- **Sources en lecture seule** — la page Desktop ne déplace, ne transcode et ne modifie aucun MP4.
+- **Médias protégés** — l’inventaire et la création des tickets passent par l’API du plugin; un ticket aléatoire à durée limitée autorise uniquement la lecture d’un MP4 choisi. Les chemins arbitraires et les liens symboliques sont refusés.
+- **Section Hermes Desktop « Agent Editor »** — bibliothèque `Waiting` / `References` / `Finish`, lecture MP4 intégrée, liens YouTube/TikTok, repères capturés depuis la position du lecteur et accessibles par seek.
+- **Sources en lecture seule** — l’interface ne déplace, ne transcode et ne modifie aucun MP4 source.
 
 ## Installation
 
@@ -60,7 +60,7 @@ Seul le marqueur `workspace/.gitkeep` est versionné; le reste de `workspace/` e
 
 ## Versionnement et mises à jour
 
-Le plugin porte actuellement la version `0.2.0` dans ses manifestes :
+Le plugin porte actuellement la version `0.3.0` dans ses manifestes :
 
 - `plugin.yaml` — identité du paquet Agent Plugin et du compagnon Desktop.
 - `plugin.json` — version du paquet portable Agent Plugins.
@@ -80,11 +80,11 @@ Le numéro de version **ne déclenche pas** la mise à jour. La révision Git es
 - Les miniatures sont produites à la demande, conservées dans un cache mémoire borné et ne sont pas écrites sur disque.
 - Les brouillons, les repères et les copies HVC1 facultatives restent sous `$HERMES_HOME/state/waiting-studio/` (copies de compatibilité dans `compat/`); aucune donnée n’est déplacée lors de l’activation du mount.
 - Les skills créés par l’interface sont enregistrés dans `skills/<nom>/SKILL.md` sous le dossier `video-agent`.
-- Les routes API et les flux média restent protégés par l’authentification du Dashboard. En mode local à jeton, le lecteur transmet le jeton en mémoire et le service worker l’ajoute uniquement aux requêtes média autorisées; il n’est pas placé dans l’URL ni écrit sur disque.
+- Le lecteur Desktop reçoit un ticket bearer de 256 bits, limité à une seule vidéo et valable 15 minutes; il le renouvelle périodiquement et le révoque quand le lecteur est démonté. Le ticket complet est conservé côté serveur sous forme de hash. Son URL média porte le ticket dans la query string (requis par `<video>` sans en-tête d’auth personnalisable); les réponses sont `no-store` et `no-referrer`. Le jeton de session Hermes n’est jamais placé dans l’URL ni stocké sur disque.
 
 ## Routes API
 
-Les routes sont montées sous `/api/plugins/video-agent` et restent protégées par l’authentification du Dashboard.
+Les routes sont montées sous `/api/plugins/video-agent`. Les API de création/gestion de tickets passent par `ctx.rest` et l’authentification Hermes normale; le flux média lui-même exige le ticket bearer temporaire décrit plus haut, pas une session ouverte ni une URL de média statique.
 
 | Méthode | Route | Rôle |
 |---|---|---|
@@ -93,6 +93,10 @@ Les routes sont montées sous `/api/plugins/video-agent` et restent protégées 
 | `GET` | `/videos/waiting-thumbnails/{filename}` | Miniature JPEG produite à la demande. |
 | `GET` | `/videos/references/{filename}` | Lecture d’un MP4 local de référence; prise en charge des requêtes Range. |
 | `GET` | `/videos/finish/{filename}` | Lecture d’un MP4 de `Finish`, y compris dans un sous-dossier. |
+| `POST` | `/video-tickets` | Émettre un ticket de lecture temporaire pour un MP4 allowlisté. |
+| `POST` | `/video-tickets/renew` | Renouveler le ticket courant (`ticketId` dans le corps JSON). |
+| `POST` | `/video-tickets/revoke` | Révoquer le ticket courant (`ticketId` dans le corps JSON). |
+| `GET` | `/videos/stream?ticket=…` | Flux Range d’un seul MP4; la query exige le ticket temporaire, pas le jeton de session Hermes. |
 | `GET`, `POST` | `/skills` | Lister ou créer un skill local validé. |
 | `GET` | `/references` | Lister les références YouTube/TikTok. |
 | `POST` | `/references` | Ajouter une référence et ses notes d’observation. |
@@ -106,7 +110,7 @@ Les chemins sont relatifs aux dossiers média autorisés; les chemins arbitraire
 ## Limites actuelles
 
 - Les brouillons sont des notes éditoriales; aucun fichier vidéo n’est créé ou rendu.
-- Dans Desktop, les repères utilisent actuellement un timecode saisi à la main : la lecture progressive du Dashboard ne peut pas être réutilisée directement par le client natif sans une passerelle de streaming authentifiée prise en charge par Hermes.
+- Les repères demandent toujours une note et une cible manuelles; le timecode est prérempli depuis la position du lecteur, puis on peut cliquer un repère pour s’y déplacer.
 - Les références YouTube/TikTok ne sont ni analysées ni téléchargées.
 - La publication sur YouTube, TikTok ou une autre plateforme n’est pas effectuée.
 - Les miniatures nécessitent FFmpeg. Sans FFmpeg, l’inventaire reste disponible, mais les aperçus peuvent échouer.
@@ -117,7 +121,7 @@ Depuis la racine du plugin, avec l’interpréteur Python du gateway (FastAPI/St
 
 ```bash
 python -m unittest discover -s tests -v
-python -m py_compile dashboard/plugin_api.py tests/test_plugin_api.py
+python -m py_compile dashboard/plugin_api.py tests/test_plugin_api.py tests/test_video_tickets.py
 node --check desktop/plugin.js
 node tests/test_desktop_plugin.js
 node --check dashboard/dist/index.js
