@@ -28,6 +28,7 @@ assert.equal(plugin.id, "video-agent");
 assert.equal(plugin.name, "Agent Editor");
 const registrations = [];
 const apiCalls = [];
+const mediaCalls = [];
 const hookStates = new Map();
 const mutationCalls = [];
 let currentComponent = null;
@@ -42,6 +43,8 @@ const sampleFolders = [
 const sampleTicket = {
   ticketId: "a".repeat(43),
   streamUrl: "http://127.0.0.1/api/plugins/video-agent/videos/stream?ticket=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  streamPath: "/videos/stream?ticket=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  mediaUrl: "hermes-media://plugin/opaque-stream",
   expiresInSeconds: 900,
 };
 sandbox.React = {
@@ -86,6 +89,12 @@ plugin.register({
   rest: (url, options) => {
     apiCalls.push({ url, options });
     return Promise.resolve(url === "/video-tickets" ? sampleTicket : { moment: {}, reference: {} });
+  },
+  media: {
+    resolveUrl(path) {
+      mediaCalls.push(path);
+      return Promise.resolve(sampleTicket.mediaUrl);
+    },
   },
   os: { openExternal() {} },
 });
@@ -143,7 +152,7 @@ contentQueryState = { data: { moments: [{ id: "moment-1", timeSeconds: 62.5, not
 page = renderPage();
 const initialPlayer = findNode(page, node => node.type === "video");
 assert.ok(initialPlayer, "Selected video should open in the embedded player");
-assert.equal(initialPlayer.props.src, sampleTicket.streamUrl);
+assert.equal(initialPlayer.props.src, sampleTicket.mediaUrl);
 assert.equal(initialPlayer.props.controls, true);
 initialPlayer.props.onTimeUpdate({ currentTarget: { currentTime: 123.4 } });
 page = renderPage();
@@ -214,6 +223,9 @@ assert.equal(moduleStub.exports.formatTimecode(3723.5), "01:02:03.500");
   assert.equal(streamQuery.queryKey[3], "records/waiting-vod.mp4");
   const ticket = await streamQuery.queryFn();
   assert.equal(ticket.ticketId, sampleTicket.ticketId);
+  assert.equal(ticket.mediaUrl, sampleTicket.mediaUrl);
+  assert.equal("streamUrl" in ticket, false);
+  assert.deepEqual(mediaCalls, [sampleTicket.streamPath]);
   assert.deepEqual(JSON.parse(JSON.stringify(apiCalls[2])), {
     url: "/video-tickets",
     options: { method: "POST", body: { folderId: "waiting", filename: "records/waiting-vod.mp4" } },

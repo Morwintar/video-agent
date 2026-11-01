@@ -103,16 +103,30 @@ function VideoList({ videos, selectedName, onSelect, search }) {
   })
 }
 
-function PlaybackPanel({ rest, scheduleInterval, folderId, video, onTimeUpdate, seekTime }) {
+function PlaybackPanel({ rest, media, scheduleInterval, folderId, video, onTimeUpdate, seekTime }) {
   const [renewalError, setRenewalError] = React.useState('')
   const playerRef = React.useRef(null)
   const restoreTimeRef = React.useRef(0)
   const ticketQuery = useQuery({
     queryKey: [...QUERY_ROOT, 'stream', folderId, video.name],
-    queryFn: () => rest('/video-tickets', {
-      method: 'POST',
-      body: { folderId, filename: video.name },
-    }),
+    queryFn: async () => {
+      if (!media?.resolveUrl) throw new Error('Mets Hermes Desktop à jour pour lire les vidéos avec le flux authentifié.')
+      const created = await rest('/video-tickets', {
+        method: 'POST',
+        body: { folderId, filename: video.name },
+      })
+      try {
+        const mediaUrl = await media.resolveUrl(created.streamPath)
+        return {
+          ticketId: created.ticketId,
+          expiresInSeconds: created.expiresInSeconds,
+          mediaUrl,
+        }
+      } catch (error) {
+        await rest('/video-tickets/revoke', { method: 'POST', body: { ticketId: created.ticketId } }).catch(() => {})
+        throw error
+      }
+    },
     enabled: Boolean(video),
     staleTime: 0,
     retry: false,
@@ -175,11 +189,11 @@ function PlaybackPanel({ rest, scheduleInterval, folderId, video, onTimeUpdate, 
   return jsxs('div', {
     className: 'flex flex-col gap-2',
     children: [
-      ticket?.streamUrl ? jsx('video', {
+      ticket?.mediaUrl ? jsx('video', {
         key: ticket.ticketId,
         ref: playerRef,
         className: 'aspect-video w-full rounded-md border border-(--ui-stroke-secondary) bg-black/80 object-contain',
-        src: ticket.streamUrl,
+        src: ticket.mediaUrl,
         controls: true,
         preload: 'metadata',
         playsInline: true,
@@ -203,7 +217,7 @@ function PlaybackPanel({ rest, scheduleInterval, folderId, video, onTimeUpdate, 
   })
 }
 
-function MomentWorkspace({ rest, scheduleInterval, video, contentQuery, currentFolderId }) {
+function MomentWorkspace({ rest, media, scheduleInterval, video, contentQuery, currentFolderId }) {
   const queryClient = useQueryClient()
   const [timecode, setTimecode] = React.useState('')
   const [note, setNote] = React.useState('')
@@ -240,7 +254,7 @@ function MomentWorkspace({ rest, scheduleInterval, video, contentQuery, currentF
   return jsxs('div', {
     className: 'flex min-h-0 flex-col gap-4',
     children: [
-      jsx(PlaybackPanel, { rest, scheduleInterval, folderId: currentFolderId, video, onTimeUpdate: setCurrentTime, seekTime }),
+      jsx(PlaybackPanel, { rest, media, scheduleInterval, folderId: currentFolderId, video, onTimeUpdate: setCurrentTime, seekTime }),
       jsxs('form', {
         className: 'grid grid-cols-1 gap-3 md:grid-cols-[10rem_minmax(0,1fr)_9rem_auto]',
         onSubmit: submitMoment,
@@ -275,7 +289,7 @@ function MomentWorkspace({ rest, scheduleInterval, video, contentQuery, currentF
   })
 }
 
-function ReferenceLibrary({ rest, scheduleInterval, openExternal, localVideos, selectedVideo, referencesQuery }) {
+function ReferenceLibrary({ rest, media, scheduleInterval, openExternal, localVideos, selectedVideo, referencesQuery }) {
   const queryClient = useQueryClient()
   const [url, setUrl] = React.useState('')
   const [note, setNote] = React.useState('')
@@ -333,14 +347,14 @@ function ReferenceLibrary({ rest, scheduleInterval, openExternal, localVideos, s
         title: `Vidéo de référence · ${localVideos.length}`,
         description: selectedVideo?.name || 'Sélectionne un MP4 dans la bibliothèque pour le lire.',
         children: selectedVideo
-          ? jsx(PlaybackPanel, { rest, scheduleInterval, folderId: 'references', video: selectedVideo })
+          ? jsx(PlaybackPanel, { rest, media, scheduleInterval, folderId: 'references', video: selectedVideo })
           : jsx('p', { className: 'py-4 text-sm text-(--ui-text-tertiary)', children: 'Aucune vidéo MP4 locale à lire.' }),
       }),
     ],
   })
 }
 
-function AgentEditorPage({ rest, scheduleInterval, openExternal }) {
+function AgentEditorPage({ rest, media, scheduleInterval, openExternal }) {
   const [activeFolder, setActiveFolder] = React.useState('waiting')
   const [selectedName, setSelectedName] = React.useState('')
   const [search, setSearch] = React.useState('')
@@ -407,15 +421,15 @@ function AgentEditorPage({ rest, scheduleInterval, openExternal }) {
             children: [jsx('input', { className: fieldClass(), type: 'search', value: search, onChange: event => setSearch(event.target.value), placeholder: 'Filtrer les vidéos…', 'aria-label': 'Filtrer les vidéos' }), jsx(VideoList, { videos, selectedName: selectedVideo?.name || '', onSelect: setSelectedName, search })],
           }),
           activeFolder === 'references'
-            ? jsx('div', { className: 'min-h-0 xl:col-span-2', children: jsx(ReferenceLibrary, { rest, scheduleInterval, openExternal, localVideos: localReferenceVideos, selectedVideo, referencesQuery }) })
+            ? jsx('div', { className: 'min-h-0 xl:col-span-2', children: jsx(ReferenceLibrary, { rest, media, scheduleInterval, openExternal, localVideos: localReferenceVideos, selectedVideo, referencesQuery }) })
             : activeFolder === 'waiting' && selectedVideo
-              ? jsx(Panel, { title: selectedVideo.name, description: 'Workspace Waiting · lecture progressive', className: 'min-h-[16rem] xl:col-span-2', children: jsx(MomentWorkspace, { rest, scheduleInterval, video: selectedVideo, contentQuery, currentFolderId: activeFolder }) })
+              ? jsx(Panel, { title: selectedVideo.name, description: 'Workspace Waiting · lecture progressive', className: 'min-h-[16rem] xl:col-span-2', children: jsx(MomentWorkspace, { rest, media, scheduleInterval, video: selectedVideo, contentQuery, currentFolderId: activeFolder }) })
               : jsx(Panel, {
                 title: selectedVideo ? selectedVideo.name : 'Aucune vidéo sélectionnée',
                 description: 'Workspace Finish · lecture seule',
                 className: 'min-h-[16rem] xl:col-span-2',
                 children: selectedVideo
-                  ? jsx(PlaybackPanel, { rest, scheduleInterval, folderId: activeFolder, video: selectedVideo })
+                  ? jsx(PlaybackPanel, { rest, media, scheduleInterval, folderId: activeFolder, video: selectedVideo })
                   : jsx('p', { className: 'py-4 text-sm text-(--ui-text-tertiary)', children: 'Ajoute des vidéos MP4 dans Finish pour les retrouver ici.' }),
               }),
         ],
@@ -429,13 +443,14 @@ export default {
   name: 'Agent Editor',
   register(ctx) {
     const rest = (path, options) => ctx.rest(path, options)
+    const media = { resolveUrl: path => ctx.media.resolveUrl(path) }
     const openExternal = url => ctx.os.openExternal(url)
     const scheduleInterval = (callback, milliseconds) => ctx.setInterval(callback, milliseconds)
     ctx.register({
       id: 'agent-editor-page',
       area: ROUTES_AREA,
       data: { path: '/agent-editor' },
-      render: () => jsx(AgentEditorPage, { rest, scheduleInterval, openExternal }),
+      render: () => jsx(AgentEditorPage, { rest, media, scheduleInterval, openExternal }),
     })
     ctx.register({
       id: 'agent-editor-sidebar',

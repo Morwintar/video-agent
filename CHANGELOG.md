@@ -3,6 +3,15 @@
 Les changements notables du projet sont consignés ici. Les versions suivent
 [SemVer](https://semver.org/).
 
+## [0.4.0] - 2026-11-01
+
+### Added
+- Le lecteur Desktop utilise le transport Hermes authentifié `ctx.media.resolveUrl`, qui préserve les requêtes Range/seek sans exposer le jeton de session dans l’URL.
+- L’API de tickets fournit un `streamPath` limité au plugin pour que le transport natif joigne le flux protégé dans Agent Editor.
+
+### Changed
+- Le lecteur requiert une version Desktop qui expose le transport média authentifié; les fichiers sources et pistes audio ne sont pas modifiés.
+
 ## [0.3.2] - 2026-11-01
 
 ### Fixed

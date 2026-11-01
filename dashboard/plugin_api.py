@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, Response
@@ -1146,6 +1146,7 @@ def create_video_ticket(payload: dict[str, Any], request: Request, response: Res
     return {
         "ticketId": ticket_id,
         "streamUrl": str(stream_url),
+        "streamPath": f"/videos/stream?{urlencode({'ticket': ticket_id})}",
         "expiresInSeconds": _STREAM_TICKET_TTL_SECONDS,
     }
 

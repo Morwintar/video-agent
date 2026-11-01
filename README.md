@@ -60,7 +60,7 @@ Seul le marqueur `workspace/.gitkeep` est versionné; le reste de `workspace/` e
 
 ## Versionnement et mises à jour
 
-Le plugin porte actuellement la version `0.3.2` dans ses manifestes :
+Le plugin porte actuellement la version `0.4.0` dans ses manifestes :
 
 - `plugin.yaml` — identité du paquet Agent Plugin et du compagnon Desktop.
 - `plugin.json` — version du paquet portable Agent Plugins.
@@ -70,7 +70,7 @@ On gardera ces valeurs identiques et on suivra SemVer (`MAJOR.MINOR.PATCH`) : co
 
 Le numéro de version **ne déclenche pas** la mise à jour. La révision Git est ce qui détermine le code installé : un push sur `main` publie le nouveau code, mais ne met pas à jour à lui seul une copie déjà installée. Pour une installation Git suivie par le gestionnaire Hermes, `hermes plugins check-updates` vérifie l’état sans modifier les fichiers, et `hermes plugins update video-agent` applique l’update. Les installs Git non épinglées sont comparées au `HEAD` distant; une install épinglée à un SHA reste épinglée jusqu’à ce qu’on installe explicitement un nouveau SHA. Un clone créé à la main doit d’abord être adopté par le gestionnaire (`hermes plugins adopt video-agent`) pour être suivi. Ces commandes dépendent de la version de Hermes installée; elles ne sont pas lancées depuis ce dépôt.
 
-`video-agent` n’est pas présent dans le catalogue officiel Hermes : son mode d’update, si on utilise le gestionnaire, est celui d’un plugin Git personnalisé. Après une mise à jour, il faut rafraîchir le Dashboard; les changements backend dépendent du rechargement du processus qui héberge le plugin. Aucun redémarrage ni push n’est fait automatiquement par ce projet.
+`video-agent` n’est pas présent dans le catalogue officiel Hermes : son mode d’update, si on utilise le gestionnaire, est celui d’un plugin Git personnalisé. Après une mise à jour, il faut rafraîchir le Dashboard; les changements backend dépendent du rechargement du processus qui héberge le plugin. **La lecture Desktop en 0.4.0 requiert aussi un build Hermes Desktop qui expose `ctx.media.resolveUrl`; mettre à jour le plugin seul ne met pas à jour cette capacité du client.** Aucun redémarrage ni push n’est fait automatiquement par ce projet.
 
 ## Données et confidentialité
 
@@ -80,7 +80,7 @@ Le numéro de version **ne déclenche pas** la mise à jour. La révision Git es
 - Les miniatures sont produites à la demande, conservées dans un cache mémoire borné et ne sont pas écrites sur disque.
 - Les brouillons, les repères et les copies HVC1 facultatives restent sous `$HERMES_HOME/state/waiting-studio/` (copies de compatibilité dans `compat/`); aucune donnée n’est déplacée lors de l’activation du mount.
 - Les skills créés par l’interface sont enregistrés dans `skills/<nom>/SKILL.md` sous le dossier `video-agent`.
-- Le lecteur Desktop reçoit un ticket bearer de 256 bits, limité à une seule vidéo et valable 15 minutes; il le renouvelle périodiquement et le révoque quand le lecteur est démonté. Le ticket complet est conservé côté serveur sous forme de hash. Son URL média porte le ticket dans la query string (requis par `<video>` sans en-tête d’auth personnalisable); les réponses sont `no-store` et `no-referrer`. Le jeton de session Hermes n’est jamais placé dans l’URL ni stocké sur disque.
+- Le lecteur Desktop reçoit un ticket bearer de 256 bits, limité à une seule vidéo et valable 15 minutes; il le renouvelle périodiquement et le révoque quand le lecteur est démonté. Le ticket complet est conservé côté serveur sous forme de hash et reste limité à la route média du plugin. L’URL `hermes-media:` l’encode dans son chemin pour alimenter `<video>`; le protocole natif transmet le ticket à la route protégée, sans inclure le jeton de session Hermes dans l’URL ni le stocker sur disque. Les réponses sont `no-store` et `no-referrer`.
 
 ## Routes API
 
