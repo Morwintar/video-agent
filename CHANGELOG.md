@@ -3,6 +3,12 @@
 Les changements notables du projet sont consignés ici. Les versions suivent
 [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- Quand Agent Editor sélectionne un MP4 plus grand que la limite courante, le backend du plugin relève en mémoire le plafond privé du Gateway jusqu’à la taille de ce fichier, sans dépasser 30 Gio; le changement s’applique aux autres opérations de fichiers gérés jusqu’au redémarrage du Gateway.
+- Ce contournement exige l’isolation `in_process` et dépend d’un détail interne du Gateway; une lecture complète via `/api/files/read` peut consommer beaucoup de mémoire. Retester après chaque mise à jour Hermes.
+
 ## [0.4.2] - 2026-11-01
 
 ### Fixed

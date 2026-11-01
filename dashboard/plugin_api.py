@@ -57,6 +57,7 @@ _MAX_STREAM_TICKETS = 256
 _STREAM_TICKET_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 _STREAM_TICKET_LOCK = threading.Lock()
 _STREAM_TICKETS: dict[str, dict[str, Any]] = {}
+_MAX_GATEWAY_MEDIA_FILE_BYTES = 30 * 1024**3
 _REFERENCE_OBSERVATION_ITEMS = (
     ("hook", "Accroche et moment fort dans les premières secondes."),
     ("pacing", "Rythme, durée des plans et transitions."),
@@ -65,6 +66,33 @@ _REFERENCE_OBSERVATION_ITEMS = (
     ("audio", "Voix, musique et effets sonores; ne pas inventer de paroles."),
     ("payoff", "Montée de tension, payoff et fin du clip."),
 )
+
+
+def _raise_gateway_managed_file_limit(required_bytes: int, gateway_web_server: Any = None) -> None:
+    """Raise the in-process Gateway file cap only as far as this video requires."""
+    if isinstance(required_bytes, bool) or not isinstance(required_bytes, int) or required_bytes < 0:
+        raise ValueError("required_bytes must be a non-negative integer")
+    if required_bytes > _MAX_GATEWAY_MEDIA_FILE_BYTES:
+        raise HTTPException(status_code=413, detail="Video exceeds the 30 GiB playback limit")
+    if gateway_web_server is None:
+        if os.environ.get("HERMES_PLUGIN_HOST_PROCESS") == "1":
+            raise HTTPException(
+                status_code=503,
+                detail="Increasing the Gateway file limit requires in-process plugin isolation",
+            )
+        try:
+            from hermes_cli import web_server as gateway_web_server
+        except ImportError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="The Gateway file limit is unavailable in this plugin process",
+            ) from exc
+
+    current_limit = getattr(gateway_web_server, "_MANAGED_FILE_MAX_BYTES", None)
+    if isinstance(current_limit, bool) or not isinstance(current_limit, int) or current_limit < 0:
+        raise HTTPException(status_code=503, detail="The Gateway file limit could not be read")
+    if required_bytes > current_limit:
+        gateway_web_server._MANAGED_FILE_MAX_BYTES = required_bytes
 
 
 def _reference_observation_checklist() -> list[dict[str, str]]:
@@ -1171,6 +1199,11 @@ def get_video_media_source(payload: dict[str, Any], response: Response) -> dict[
         raise HTTPException(status_code=404, detail="Video not found")
     if folder_id == "waiting":
         media_path = _resolve_hvc1_compat_video(media_root, filename) or media_path
+    try:
+        media_size = media_path.stat().st_size
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail="Video not found") from exc
+    _raise_gateway_managed_file_limit(media_size)
     return {"mediaPath": str(media_path)}
 
 

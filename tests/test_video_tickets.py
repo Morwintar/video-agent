@@ -5,10 +5,11 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -98,20 +99,22 @@ class VideoTicketRouteTests(unittest.TestCase):
             (root / "References").mkdir()
             (root / "Finish").mkdir()
             app = self.make_app()
-            with patch("plugin_api._media_root", return_value=root):
-                with TestClient(app) as client:
-                    response = client.post("/api/plugins/video-agent/video-media-source", json={
-                        "folderId": "waiting",
-                        "filename": "records/vod #100%.mp4",
-                    })
-                    traversal = client.post("/api/plugins/video-agent/video-media-source", json={
-                        "folderId": "waiting",
-                        "filename": "../outside.mp4",
-                    })
-                    wrong_extension = client.post("/api/plugins/video-agent/video-media-source", json={
-                        "folderId": "waiting",
-                        "filename": "records/vod.txt",
-                    })
+            with patch("plugin_api._raise_gateway_managed_file_limit") as raise_limit:
+                with patch("plugin_api._media_root", return_value=root):
+                    with TestClient(app) as client:
+                        response = client.post("/api/plugins/video-agent/video-media-source", json={
+                            "folderId": "waiting",
+                            "filename": "records/vod #100%.mp4",
+                        })
+                        traversal = client.post("/api/plugins/video-agent/video-media-source", json={
+                            "folderId": "waiting",
+                            "filename": "../outside.mp4",
+                        })
+                        wrong_extension = client.post("/api/plugins/video-agent/video-media-source", json={
+                            "folderId": "waiting",
+                            "filename": "records/vod.txt",
+                        })
+            raise_limit.assert_called_once_with(source.stat().st_size)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"mediaPath": str(source)})
@@ -131,16 +134,37 @@ class VideoTicketRouteTests(unittest.TestCase):
             compatibility.parent.mkdir(parents=True)
             compatibility.write_bytes(b"hvc1-copy")
             app = self.make_app()
-            with patch("plugin_api._media_root", return_value=root):
-                with patch("plugin_api._state_directory", return_value=state):
-                    with TestClient(app) as client:
-                        response = client.post("/api/plugins/video-agent/video-media-source", json={
-                            "folderId": "waiting",
-                            "filename": "records/vod.mp4",
-                        })
+            with patch("plugin_api._raise_gateway_managed_file_limit") as raise_limit:
+                with patch("plugin_api._media_root", return_value=root):
+                    with patch("plugin_api._state_directory", return_value=state):
+                        with TestClient(app) as client:
+                            response = client.post("/api/plugins/video-agent/video-media-source", json={
+                                "folderId": "waiting",
+                                "filename": "records/vod.mp4",
+                            })
+            raise_limit.assert_called_once_with(compatibility.stat().st_size)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"mediaPath": str(compatibility)})
+
+    def test_gateway_file_limit_increases_only_as_needed_and_respects_30_gib_cap(self) -> None:
+        current_limit = 100 * 1024 * 1024
+        required_bytes = 4 * 1024 * 1024 * 1024
+        gateway = SimpleNamespace(_MANAGED_FILE_MAX_BYTES=current_limit)
+
+        plugin_api._raise_gateway_managed_file_limit(required_bytes, gateway)
+
+        self.assertEqual(gateway._MANAGED_FILE_MAX_BYTES, required_bytes)
+
+        larger_existing_limit = SimpleNamespace(_MANAGED_FILE_MAX_BYTES=8 * 1024**3)
+        plugin_api._raise_gateway_managed_file_limit(required_bytes, larger_existing_limit)
+        self.assertEqual(larger_existing_limit._MANAGED_FILE_MAX_BYTES, 8 * 1024**3)
+
+        over_cap = SimpleNamespace(_MANAGED_FILE_MAX_BYTES=current_limit)
+        with self.assertRaises(HTTPException) as raised:
+            plugin_api._raise_gateway_managed_file_limit(30 * 1024**3 + 1, over_cap)
+        self.assertEqual(raised.exception.status_code, 413)
+        self.assertEqual(over_cap._MANAGED_FILE_MAX_BYTES, current_limit)
 
     def test_ticket_is_revoked_and_cannot_be_renewed_or_used_afterward(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

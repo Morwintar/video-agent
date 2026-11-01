@@ -81,6 +81,7 @@ Le numéro de version **ne déclenche pas** la mise à jour. La révision Git es
 - Les brouillons, les repères et les copies HVC1 facultatives restent sous `$HERMES_HOME/state/waiting-studio/` (copies de compatibilité dans `compat/`); aucune donnée n’est déplacée lors de l’activation du mount.
 - Les skills créés par l’interface sont enregistrés dans `skills/<nom>/SKILL.md` sous le dossier `video-agent`.
 - Agent Editor appelle `/video-media-source` avec `ctx.rest`; cette route n’accepte qu’un dossier et un nom MP4 allowlistés et retourne le chemin canonique validé avec `no-store`/`no-referrer`. Le lecteur encode ce chemin dans `hermes-media://remote/...`; le processus principal du Desktop transmet l’authentification et Range à `/api/files/stream`. Le jeton de session n’est ni donné au JavaScript du plugin ni inclus dans l’URL. Les endpoints de tickets historiques restent disponibles pour compatibilité; le lecteur Agent Editor n’en dépend plus.
+- Si le fichier sélectionné dépasse le plafond courant du Gateway, le backend du plugin relève sa constante privée jusqu’à la taille du MP4, au maximum 30 Gio. Ce changement est **global au processus** (autres lectures/téléversements gérés inclus) et reste actif jusqu’au redémarrage du Gateway. Il nécessite l’isolation `in_process`; une lecture complète par `/api/files/read` peut consommer jusqu’à plusieurs dizaines de Gio de mémoire. Cette intégration dépend d’un détail interne Hermes et doit être retestée après chaque mise à jour du Gateway.
 
 ## Routes API
 
