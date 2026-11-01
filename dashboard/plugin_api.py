@@ -21,7 +21,11 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, Response
 
 router = APIRouter()
-FOLDERS = (("waiting", "Waiting"), ("finish", "Finish"))
+FOLDERS = (
+    ("waiting", "Waiting"),
+    ("references", "References"),
+    ("finish", "Finish"),
+)
 _SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _MAX_SKILL_DESCRIPTION = 1024
 _MAX_SKILL_BODY = 32_000
@@ -88,10 +92,45 @@ def _validate_observation_checklist(raw_checklist: Any) -> list[dict[str, str]]:
     return validated
 
 
-def _references_home() -> Path:
+def _hermes_home() -> Path:
     """Resolve the active Hermes home without hard-coding the plugin's source tree."""
     hermes_home = os.environ.get("HERMES_HOME")
     return Path(hermes_home).expanduser() if hermes_home else Path.home() / ".hermes"
+
+
+def _workspace_root() -> Path | None:
+    """Return the configured absolute mountpoint or this plugin's default workspace."""
+    configured = os.environ.get("VIDEO_AGENT_WORKSPACE")
+    if configured:
+        candidate = Path(configured).expanduser()
+        return candidate if candidate.is_absolute() else None
+    return _plugin_root() / "workspace"
+
+
+def _active_workspace_root() -> Path | None:
+    """Use the mountpoint only when all three expected media folders are present."""
+    candidate = _workspace_root()
+    if candidate is None:
+        return None
+    try:
+        if candidate.is_symlink():
+            return None
+        resolved_root = candidate.resolve(strict=True)
+        if not resolved_root.is_dir():
+            return None
+        for label in ("Waiting", "References", "Finish"):
+            directory = resolved_root / label
+            if directory.is_symlink() or not directory.is_dir():
+                return None
+            if directory.resolve(strict=True).parent != resolved_root:
+                return None
+        return resolved_root
+    except OSError:
+        return None
+
+
+def _references_home() -> Path:
+    return _hermes_home()
 
 
 def _validate_reference_url(raw_url: Any) -> dict[str, str]:
@@ -176,11 +215,32 @@ def _validate_reference_note(raw_note: Any) -> str:
     return note
 
 
+def _reference_store_directory(home: Path, *, create: bool = False) -> Path | None:
+    """Store reference links with mounted media, or keep the historical state directory."""
+    workspace = _active_workspace_root()
+    if workspace is None:
+        return _state_directory(home, create=create)
+
+    references_dir = workspace / "References"
+    if references_dir.is_symlink():
+        raise OSError("unsafe references directory")
+    resolved_references = references_dir.resolve(strict=True)
+    if resolved_references.parent != workspace or not resolved_references.is_dir():
+        raise OSError("unsafe references directory")
+    return resolved_references
+
+
 def _load_references(home: Path) -> list[dict[str, Any]]:
-    directory = _state_directory(home)
+    directory = _reference_store_directory(home)
     if directory is None:
         return []
-    store = directory / "references.json"
+    workspace = _active_workspace_root()
+    store = directory / ("links.json" if workspace is not None else "references.json")
+    if workspace is not None and not store.exists():
+        legacy_directory = _state_directory(home)
+        legacy_store = legacy_directory / "references.json" if legacy_directory is not None else None
+        if legacy_store is not None and legacy_store.exists():
+            store = legacy_store
     if store.is_symlink():
         raise OSError("unsafe reference store")
     if not store.exists():
@@ -230,10 +290,11 @@ def _load_references(home: Path) -> list[dict[str, Any]]:
 
 
 def _save_references(home: Path, references: list[dict[str, Any]]) -> None:
-    directory = _state_directory(home, create=True)
+    workspace = _active_workspace_root()
+    directory = _reference_store_directory(home, create=True)
     if directory is None:
         raise OSError("reference store is unavailable")
-    store = directory / "references.json"
+    store = directory / ("links.json" if workspace is not None else "references.json")
     if store.is_symlink():
         raise OSError("unsafe reference store")
 
@@ -341,22 +402,32 @@ def _resolve_regular_relative_video(directory: Path, parts: tuple[str, ...]) -> 
         return None
 
 
-def _resolve_waiting_video(root: Path, filename: str) -> Path | None:
-    """Resolve a regular MP4 anywhere beneath Waiting without following symlinks."""
+def _resolve_video_in_folder(root: Path, folder_name: str, filename: str) -> Path | None:
+    """Resolve one regular MP4 beneath an allowlisted folder without following symlinks."""
     parts = _relative_video_parts(filename)
     if parts is None:
         return None
     try:
         resolved_root = root.resolve(strict=True)
-        waiting_dir = resolved_root / "Waiting"
-        if waiting_dir.is_symlink():
+        media_dir = resolved_root / folder_name
+        if media_dir.is_symlink():
             return None
-        resolved_waiting = waiting_dir.resolve(strict=True)
-        if resolved_waiting.parent != resolved_root or not resolved_waiting.is_dir():
+        resolved_media_dir = media_dir.resolve(strict=True)
+        if resolved_media_dir.parent != resolved_root or not resolved_media_dir.is_dir():
             return None
-        return _resolve_regular_relative_video(resolved_waiting, parts)
+        return _resolve_regular_relative_video(resolved_media_dir, parts)
     except OSError:
         return None
+
+
+def _resolve_waiting_video(root: Path, filename: str) -> Path | None:
+    """Resolve a regular MP4 anywhere beneath Waiting without following symlinks."""
+    return _resolve_video_in_folder(root, "Waiting", filename)
+
+
+def _resolve_reference_video(root: Path, filename: str) -> Path | None:
+    """Resolve a regular MP4 anywhere beneath References without following symlinks."""
+    return _resolve_video_in_folder(root, "References", filename)
 
 
 def _resolve_hvc1_compat_video(root: Path, filename: str) -> Path | None:
@@ -722,10 +793,11 @@ def _create_video_moment(
 
 
 def _media_root() -> Path:
-    """Resolve the video workspace beneath the active Hermes home."""
-    hermes_home = os.environ.get("HERMES_HOME")
-    home = Path(hermes_home).expanduser() if hermes_home else Path.home() / ".hermes"
-    return home / "inbox" / "stream-test"
+    """Prefer the unified mountpoint, preserving the existing home path as a fallback."""
+    workspace = _active_workspace_root()
+    if workspace is not None:
+        return workspace
+    return _hermes_home() / "inbox" / "stream-test"
 
 
 def _plugin_root() -> Path:
@@ -756,7 +828,10 @@ def _scan_folder(root: Path, folder_id: str, label: str) -> dict[str, Any]:
         videos: list[dict[str, Any]] = []
         entries_seen = 0
         truncated = False
-        recurse = folder_id == "waiting" and label == "Waiting"
+        recurse = (
+            folder_id in {"waiting", "references", "finish"}
+            and label in {"Waiting", "References", "Finish"}
+        )
 
         def scan_directory(current: Path, relative_parts: tuple[str, ...], depth: int) -> None:
             nonlocal entries_seen, truncated
@@ -806,44 +881,13 @@ def _scan_folder(root: Path, folder_id: str, label: str) -> dict[str, Any]:
 
 
 def _resolve_finish_video(root: Path, filename: str) -> Path | None:
-    """Resolve one regular MP4 immediately inside Finish; reject paths and symlinks."""
-    if (
-        not isinstance(filename, str)
-        or not filename
-        or filename in {".", ".."}
-        or "/" in filename
-        or "\\" in filename
-        or Path(filename).name != filename
-        or Path(filename).suffix.casefold() != ".mp4"
-    ):
-        return None
-
-    try:
-        resolved_root = root.resolve(strict=True)
-        finish_dir = resolved_root / "Finish"
-        if finish_dir.is_symlink():
-            return None
-        resolved_finish = finish_dir.resolve(strict=True)
-        if resolved_finish.parent != resolved_root or not resolved_finish.is_dir():
-            return None
-
-        candidate = resolved_finish / filename
-        if candidate.is_symlink():
-            return None
-        metadata = os.stat(candidate, follow_symlinks=False)
-        if not stat.S_ISREG(metadata.st_mode):
-            return None
-        resolved_candidate = candidate.resolve(strict=True)
-        if resolved_candidate.parent != resolved_finish:
-            return None
-        return resolved_candidate
-    except OSError:
-        return None
+    """Resolve a regular MP4 anywhere beneath Finish without following symlinks."""
+    return _resolve_video_in_folder(root, "Finish", filename)
 
 
 @router.get("/videos")
 def list_videos() -> dict[str, Any]:
-    """Return the two allowlisted folders; no paths or media URLs are exposed."""
+    """Return the three allowlisted media folders; no paths or media URLs are exposed."""
     root = _media_root()
     return {
         "readOnly": True,
@@ -851,10 +895,25 @@ def list_videos() -> dict[str, Any]:
     }
 
 
-@router.get("/videos/finish/{filename}")
+@router.get("/videos/finish/{filename:path}")
 def get_finished_video(filename: str) -> FileResponse:
     """Stream one allowlisted Finish MP4 with byte-range support for seeking."""
     path = _resolve_finish_video(_media_root(), filename)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+    return FileResponse(
+        path,
+        media_type="video/mp4",
+        filename=path.name,
+        stat_result=path.stat(),
+        content_disposition_type="inline",
+    )
+
+
+@router.get("/videos/references/{filename:path}")
+def get_reference_video(filename: str) -> FileResponse:
+    """Stream a local reference MP4 with byte-range support for seeking."""
+    path = _resolve_reference_video(_media_root(), filename)
     if path is None:
         raise HTTPException(status_code=404, detail="Video not found")
     return FileResponse(

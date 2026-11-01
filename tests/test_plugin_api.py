@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -67,7 +68,7 @@ from plugin_api import _scan_folder, list_videos  # noqa: E402
 
 class ScanFolderTests(unittest.TestCase):
     def test_lists_sorted_regular_mp4_files_and_skips_other_entries(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/opt/data/cache/scratch") as temp_dir:
+        with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             waiting = root / "Waiting"
             waiting.mkdir()
@@ -90,7 +91,7 @@ class ScanFolderTests(unittest.TestCase):
         self.assertNotIn("path", result)
 
     def test_does_not_follow_video_symlinks(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/opt/data/cache/scratch") as temp_dir:
+        with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             waiting = root / "Waiting"
             waiting.mkdir()
@@ -113,7 +114,7 @@ class ScanFolderTests(unittest.TestCase):
         self.assertEqual(result["videos"], [])
 
     def test_missing_folder_is_reported_without_leaking_paths(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/opt/data/cache/scratch") as temp_dir:
+        with tempfile.TemporaryDirectory() as temp_dir:
             result = _scan_folder(Path(temp_dir), "finish", "Finish")
 
         self.assertFalse(result["available"])
@@ -121,18 +122,54 @@ class ScanFolderTests(unittest.TestCase):
         self.assertEqual(result["videos"], [])
         self.assertNotIn("path", result)
 
-    def test_route_lists_only_waiting_and_finish_from_active_hermes_home(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/opt/data/cache/scratch") as temp_dir:
+    def test_relative_workspace_override_is_rejected(self) -> None:
+        with patch.dict(os.environ, {"VIDEO_AGENT_WORKSPACE": "relative/workspace"}):
+            self.assertIsNone(plugin_api._workspace_root())
+
+    def test_mounted_workspace_lists_waiting_references_and_finish_instead_of_legacy_media(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            plugin_root = root / "plugin"
+            workspace = plugin_root / "workspace"
+            for label in ("Waiting", "References", "Finish"):
+                (workspace / label).mkdir(parents=True, exist_ok=True)
+            (workspace / "Waiting" / "incoming.mp4").write_bytes(b"waiting")
+            (workspace / "References" / "style.mp4").write_bytes(b"reference")
+            (workspace / "Finish" / "final.mp4").write_bytes(b"finished")
+            home = root / "hermes"
+            legacy_waiting = home / "inbox" / "stream-test" / "Waiting"
+            legacy_waiting.mkdir(parents=True)
+            (legacy_waiting / "legacy.mp4").write_bytes(b"legacy")
+
+            with patch.dict(os.environ, {"HERMES_HOME": str(home)}), patch(
+                "plugin_api._plugin_root", return_value=plugin_root
+            ):
+                payload = list_videos()
+
+        self.assertEqual(
+            [folder["label"] for folder in payload["folders"]],
+            ["Waiting", "References", "Finish"],
+        )
+        self.assertEqual([folder["count"] for folder in payload["folders"]], [1, 1, 1])
+        self.assertEqual(
+            [video["name"] for folder in payload["folders"] for video in folder["videos"]],
+            ["incoming.mp4", "style.mp4", "final.mp4"],
+        )
+
+    def test_route_lists_waiting_references_and_finish_from_active_hermes_home(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
             home = Path(temp_dir)
             media_root = home / "inbox" / "stream-test"
             waiting = media_root / "Waiting"
+            references = media_root / "References"
             finish = media_root / "Finish"
             extra = media_root / "Unrelated"
-            for directory in (waiting, finish, extra):
+            for directory in (waiting, references, finish, extra):
                 directory.mkdir(parents=True)
             (waiting / "incoming.mp4").write_bytes(b"w")
             (waiting / "records").mkdir()
             (waiting / "records" / "local-recording.mp4").write_bytes(b"wn")
+            (references / "reference.mp4").write_bytes(b"r")
             (finish / "render.mp4").write_bytes(b"f")
             (finish / "subfolder").mkdir()
             (finish / "subfolder" / "ignored.mp4").write_bytes(b"f2")
@@ -142,11 +179,14 @@ class ScanFolderTests(unittest.TestCase):
                 payload = list_videos()
 
         self.assertTrue(payload["readOnly"])
-        self.assertEqual([folder["label"] for folder in payload["folders"]], ["Waiting", "Finish"])
-        self.assertEqual([folder["count"] for folder in payload["folders"]], [2, 1])
+        self.assertEqual(
+            [folder["label"] for folder in payload["folders"]],
+            ["Waiting", "References", "Finish"],
+        )
+        self.assertEqual([folder["count"] for folder in payload["folders"]], [2, 1, 2])
         self.assertEqual(
             [video["name"] for folder in payload["folders"] for video in folder["videos"]],
-            ["incoming.mp4", "records/local-recording.mp4", "render.mp4"],
+            ["incoming.mp4", "records/local-recording.mp4", "reference.mp4", "render.mp4", "subfolder/ignored.mp4"],
         )
         self.assertTrue(
             all("path" not in video for folder in payload["folders"] for video in folder["videos"])
@@ -155,13 +195,16 @@ class ScanFolderTests(unittest.TestCase):
 
 class NewFeatureTests(unittest.TestCase):
     def test_finish_video_resolver_is_confined_to_regular_finish_mp4s(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/opt/data/cache/scratch") as temp_dir:
+        with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             finish = root / "Finish"
             waiting = root / "Waiting"
             finish.mkdir()
             waiting.mkdir()
             (finish / "final.mp4").write_bytes(b"video")
+            nested_finish = finish / "events"
+            nested_finish.mkdir()
+            (nested_finish / "nested-final.mp4").write_bytes(b"nested")
             (waiting / "incoming.mp4").write_bytes(b"waiting")
             outside = root / "outside.mp4"
             outside.write_bytes(b"outside")
@@ -173,6 +216,10 @@ class NewFeatureTests(unittest.TestCase):
             self.assertTrue(hasattr(plugin_api, "_resolve_finish_video"), "finish video resolver is missing")
             resolver = plugin_api._resolve_finish_video
             self.assertEqual(resolver(root, "final.mp4"), finish / "final.mp4")
+            self.assertEqual(resolver(root, "events/nested-final.mp4"), nested_finish / "nested-final.mp4")
+            with patch("plugin_api._media_root", return_value=root):
+                response = plugin_api.get_finished_video("events/nested-final.mp4")
+            self.assertEqual(Path(response.path), nested_finish / "nested-final.mp4")
             self.assertIsNone(resolver(root, "../outside.mp4"))
             self.assertIsNone(resolver(root, "incoming.mp4"))
             self.assertIsNone(resolver(root, "linked.mp4"))
@@ -184,18 +231,20 @@ class NewFeatureTests(unittest.TestCase):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
-        with tempfile.TemporaryDirectory(dir="/opt/data/cache/scratch") as temp_dir:
+        with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             finish = root / "Finish"
             finish.mkdir()
-            (finish / "final.mp4").write_bytes(b"0123456789")
+            events = finish / "events"
+            events.mkdir()
+            (events / "final.mp4").write_bytes(b"0123456789")
             self.assertTrue(hasattr(plugin_api, "get_finished_video"), "finish video endpoint is missing")
             app = FastAPI()
             app.include_router(plugin_api.router, prefix="/api/plugins/video-agent")
             with patch("plugin_api._media_root", return_value=root):
                 with TestClient(app) as client:
                     response = client.get(
-                        "/api/plugins/video-agent/videos/finish/final.mp4",
+                        "/api/plugins/video-agent/videos/finish/events/final.mp4",
                         headers={"Range": "bytes=2-5"},
                     )
 
@@ -205,8 +254,124 @@ class NewFeatureTests(unittest.TestCase):
         self.assertEqual(response.headers["content-range"], "bytes 2-5/10")
         self.assertTrue(response.headers["content-disposition"].startswith("inline"))
 
+    def test_reference_video_resolver_is_confined_to_regular_reference_mp4s(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            references = root / "References"
+            references.mkdir()
+            nested = references / "vertical"
+            nested.mkdir()
+            (nested / "style.mp4").write_bytes(b"reference")
+            (root / "outside.mp4").write_bytes(b"outside")
+            self.assertTrue(
+                hasattr(plugin_api, "_resolve_reference_video"),
+                "reference video resolver is missing",
+            )
+            self.assertTrue(
+                hasattr(plugin_api, "get_reference_video"),
+                "reference video endpoint is missing",
+            )
+            resolver = plugin_api._resolve_reference_video
+            self.assertEqual(resolver(root, "vertical/style.mp4"), nested / "style.mp4")
+            self.assertIsNone(resolver(root, "../outside.mp4"))
+            self.assertIsNone(resolver(root, "outside.mp4"))
+            self.assertIsNone(resolver(root, "notes.txt"))
+            with patch("plugin_api._media_root", return_value=root):
+                response = plugin_api.get_reference_video("vertical/style.mp4")
+            self.assertEqual(Path(response.path), nested / "style.mp4")
+            self.assertEqual(response.media_type, "video/mp4")
+
+    def test_reference_video_route_supports_range_playback(self) -> None:
+        if not HAS_FASTAPI:
+            self.skipTest("FastAPI/Starlette is unavailable in this Python environment")
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            references = root / "References"
+            references.mkdir()
+            nested = references / "vertical"
+            nested.mkdir()
+            (nested / "style.mp4").write_bytes(b"0123456789")
+            app = FastAPI()
+            app.include_router(plugin_api.router, prefix="/api/plugins/video-agent")
+            with patch("plugin_api._media_root", return_value=root):
+                with TestClient(app) as client:
+                    response = client.get(
+                        "/api/plugins/video-agent/videos/references/vertical%2Fstyle.mp4",
+                        headers={"Range": "bytes=2-5"},
+                    )
+
+        self.assertEqual(response.status_code, 206)
+        self.assertEqual(response.content, b"2345")
+        self.assertTrue(response.headers["content-type"].startswith("video/mp4"))
+        self.assertEqual(response.headers["content-range"], "bytes 2-5/10")
+        self.assertTrue(response.headers["content-disposition"].startswith("inline"))
+
+    def test_workspace_uses_legacy_links_until_the_first_workspace_write(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            plugin_root = root / "plugin"
+            workspace = plugin_root / "workspace"
+            home = root / "hermes"
+            home.mkdir()
+            with patch.dict(os.environ, {"HERMES_HOME": str(home)}), patch(
+                "plugin_api._plugin_root", return_value=plugin_root
+            ):
+                legacy_reference = plugin_api._add_reference(
+                    plugin_api._references_home(),
+                    "https://youtu.be/legacy123",
+                    "Ancienne note.",
+                )
+                legacy_store = home / "state" / "waiting-studio" / "references.json"
+                self.assertTrue(legacy_store.is_file(), "legacy store should exist before the mount is activated")
+                for label in ("Waiting", "References", "Finish"):
+                    (workspace / label).mkdir(parents=True, exist_ok=True)
+                visible = plugin_api._list_references(plugin_api._references_home())
+                new_reference = plugin_api._add_reference(
+                    plugin_api._references_home(),
+                    "https://youtu.be/newref123",
+                    "Nouvelle note.",
+                )
+                migrated = plugin_api._list_references(plugin_api._references_home())
+                old_store_after = legacy_store.is_file()
+
+            workspace_store = workspace / "References" / "links.json"
+            mode = workspace_store.stat().st_mode & 0o777
+
+        self.assertEqual([item["id"] for item in visible], [legacy_reference["id"]])
+        self.assertEqual({item["id"] for item in migrated}, {legacy_reference["id"], new_reference["id"]})
+        self.assertTrue(old_store_after)
+        self.assertEqual(mode, 0o600)
+
+    def test_workspace_persists_reference_links_beside_reference_media(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            plugin_root = root / "plugin"
+            workspace = plugin_root / "workspace"
+            for label in ("Waiting", "References", "Finish"):
+                (workspace / label).mkdir(parents=True, exist_ok=True)
+            home = root / "hermes"
+            home.mkdir()
+            with patch.dict(os.environ, {"HERMES_HOME": str(home)}), patch(
+                "plugin_api._plugin_root", return_value=plugin_root
+            ):
+                reference = plugin_api._add_reference(
+                    plugin_api._references_home(),
+                    "https://youtu.be/example123",
+                    "Observer le rythme.",
+                )
+
+            workspace_store = workspace / "References" / "links.json"
+            legacy_store = home / "state" / "waiting-studio" / "references.json"
+            payload = json.loads(workspace_store.read_text(encoding="utf-8"))
+
+        self.assertEqual(payload["references"][0]["id"], reference["id"])
+        self.assertFalse(legacy_store.exists())
+
     def test_custom_skill_creation_is_plugin_local_and_listed_without_paths(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/opt/data/cache/scratch") as temp_dir:
+        with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             self.assertTrue(hasattr(plugin_api, "_create_custom_skill"), "custom skill writer is missing")
             self.assertTrue(hasattr(plugin_api, "_list_custom_skills"), "custom skill listing is missing")
@@ -237,7 +402,7 @@ class NewFeatureTests(unittest.TestCase):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
-        with tempfile.TemporaryDirectory(dir="/opt/data/cache/scratch") as temp_dir:
+        with tempfile.TemporaryDirectory() as temp_dir:
             plugin_root = Path(temp_dir)
             app = FastAPI()
             app.include_router(plugin_api.router, prefix="/api/plugins/video-agent")
@@ -271,7 +436,7 @@ class NewFeatureTests(unittest.TestCase):
         except ImportError:
             self.skipTest("Hermes Agent Plugin loader is unavailable in this Python environment")
 
-        with tempfile.TemporaryDirectory(dir="/opt/data/cache/scratch") as temp_dir:
+        with tempfile.TemporaryDirectory() as temp_dir:
             plugin_root = Path(temp_dir)
             shutil.copyfile(PLUGIN_ROOT / "plugin.json", plugin_root / "plugin.json")
             plugin_api._create_custom_skill(
@@ -287,7 +452,7 @@ class NewFeatureTests(unittest.TestCase):
         self.assertEqual(package.diagnostics, ())
 
     def test_custom_skill_creation_rejects_traversal_and_existing_names(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/opt/data/cache/scratch") as temp_dir:
+        with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             self.assertTrue(hasattr(plugin_api, "_create_custom_skill"), "custom skill writer is missing")
             with self.assertRaises(ValueError):
@@ -327,7 +492,7 @@ class NewFeatureTests(unittest.TestCase):
                     plugin_api._validate_reference_url(url)
 
     def test_reference_registry_persists_in_hermes_home_and_can_remove_entries(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/opt/data/cache/scratch") as temp_dir:
+        with tempfile.TemporaryDirectory() as temp_dir:
             home = Path(temp_dir)
             self.assertEqual(plugin_api._list_references(home), [])
             self.assertFalse((home / "state").exists(), "listing must not create persistent state")
@@ -344,7 +509,7 @@ class NewFeatureTests(unittest.TestCase):
             self.assertEqual(plugin_api._list_references(home), [])
 
     def test_new_references_capture_the_default_observation_checklist(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/opt/data/cache/scratch") as temp_dir:
+        with tempfile.TemporaryDirectory() as temp_dir:
             reference = plugin_api._add_reference(
                 Path(temp_dir),
                 "https://youtu.be/abc123",
@@ -363,7 +528,7 @@ class NewFeatureTests(unittest.TestCase):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
-        with tempfile.TemporaryDirectory(dir="/opt/data/cache/scratch") as temp_dir:
+        with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             home = root / "home"
             home.mkdir()
@@ -396,7 +561,7 @@ class NewFeatureTests(unittest.TestCase):
         self.assertEqual(draft.json()["item"]["sourceFilename"], "records/nested-recording.mp4")
 
     def test_content_workspace_lists_only_finish_clips_for_selected_waiting_video(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/opt/data/cache/scratch") as temp_dir:
+        with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             home = root / "home"
             home.mkdir()
@@ -426,7 +591,7 @@ class NewFeatureTests(unittest.TestCase):
         self.assertNotIn("path", workspace["clips"][0])
 
     def test_waiting_video_resolver_accepts_nested_regular_mp4s_but_rejects_symlinks(self) -> None:
-        with tempfile.TemporaryDirectory(dir="/opt/data/cache/scratch") as temp_dir:
+        with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             waiting = root / "Waiting"
             finish = root / "Finish"
@@ -469,7 +634,7 @@ class NewFeatureTests(unittest.TestCase):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
-        with tempfile.TemporaryDirectory(dir="/opt/data/cache/scratch") as temp_dir:
+        with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             waiting = root / "Waiting" / "records"
             waiting.mkdir(parents=True)
@@ -540,7 +705,7 @@ class NewFeatureTests(unittest.TestCase):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
-        with tempfile.TemporaryDirectory(dir="/opt/data/cache/scratch") as temp_dir:
+        with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             waiting = root / "Waiting"
             waiting.mkdir()
@@ -581,7 +746,7 @@ class NewFeatureTests(unittest.TestCase):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
-        with tempfile.TemporaryDirectory(dir="/opt/data/cache/scratch") as temp_dir:
+        with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             home = root / "home"
             home.mkdir()
@@ -626,7 +791,7 @@ class NewFeatureTests(unittest.TestCase):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
-        with tempfile.TemporaryDirectory(dir="/opt/data/cache/scratch") as temp_dir:
+        with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
             home = base / "home"
             home.mkdir()
@@ -719,7 +884,7 @@ class NewFeatureTests(unittest.TestCase):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
-        with tempfile.TemporaryDirectory(dir="/opt/data/cache/scratch") as temp_dir:
+        with tempfile.TemporaryDirectory() as temp_dir:
             home = Path(temp_dir)
             app = FastAPI()
             app.include_router(plugin_api.router, prefix="/api/plugins/video-agent")

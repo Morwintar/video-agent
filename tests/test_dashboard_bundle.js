@@ -198,6 +198,7 @@ async function flushEffects() {
 
 const finalVideo = { name: "final clip.mp4", sizeBytes: 20 };
 const finishedClip = { name: "waiting-vod_scared_reaction_15s_TEST.mp4", sizeBytes: 24 };
+const referenceVideo = { name: "vertical/style reference.mp4", sizeBytes: 18 };
 let workspaceClips = [finishedClip];
 const waitingVideo = { name: "records/waiting-vod.mp4", sizeBytes: 30 };
 const observationChecklist = [
@@ -217,6 +218,7 @@ const snapshot = {
   readOnly: true,
   folders: [
     { id: "waiting", label: "Waiting", available: true, count: 1, videos: [waitingVideo] },
+    { id: "references", label: "References", available: true, count: 1, videos: [referenceVideo] },
     { id: "finish", label: "Finish", available: true, count: 1, videos: [finalVideo] },
   ],
 };
@@ -233,8 +235,8 @@ async function main() {
 
   resetHooks(baseState());
   let tree = render(React.createElement(registeredComponent, {}));
-  assert.equal(findAll(tree, (node) => node.type === "button" && node.props.className === "wvs__play").length, 1,
-    "Finish should expose a play button inside its collapsed library");
+  assert.equal(findAll(tree, (node) => node.type === "button" && node.props.className === "wvs__play").length, 2,
+    "Finish and local References should expose play buttons in their collapsed libraries");
   const primaryLibrary = findAll(tree, (node) => node.type === "div" && node.props.className === "wvs__grid wvs__grid--primary")[0];
   assert.ok(primaryLibrary, "the Waiting recording list should be the primary home view");
   assert.equal(findAll(primaryLibrary, (node) => node.type === "section" && node.props.className === "wvs__panel").length, 1,
@@ -243,6 +245,8 @@ async function main() {
     "each Waiting recording should have a thumbnail slot in the list");
   assert.ok(findAll(tree, (node) => node.type === "details" && node.props.className === "wvs__finish-library").length,
     "the complete Finish inventory should remain available in a secondary disclosure");
+  assert.ok(findAll(tree, (node) => node.type === "details" && String(node.props.className).includes("wvs__reference-library")).length,
+    "local reference videos should be available in their own secondary disclosure");
   assert.equal(findAll(tree, (node) => node.type === "h2" && node.props.id === "video-agent-skills-title").length, 1,
     "custom skills section should render");
   assert.equal(findAll(tree, (node) => node.type === "h2" && node.props.id === "video-agent-references-title").length, 1,
@@ -291,9 +295,26 @@ async function main() {
   windowHandlers.keydown({ key: "Escape" });
   assert.equal(stateValues[7], null, "Escape should close the player");
 
-  for (const cleanup of effectCleanups) cleanup();
+  for (const cleanup of effectCleanups.splice(0)) cleanup();
   assert.deepEqual(revokedBlobUrls, ["blob:loaded"], "closing should release the temporary video URL");
   assert.ok(focusEvents.includes("restored"), "closing should return focus to the previous element");
+
+  resetHooks(baseState());
+  tree = render(React.createElement(registeredComponent, {}));
+  const referenceFilenameButton = findAll(tree, (node) => node.type === "button" && String(node.props.className).includes("wvs__filename-button") && node.props.title === referenceVideo.name)[0];
+  assert.ok(referenceFilenameButton, "local reference video filename should be clickable");
+  referenceFilenameButton.props.onClick();
+  const selectedReferenceVideo = stateValues[7];
+  assert.equal(selectedReferenceVideo.folderId, "references");
+
+  resetHooks(baseState(selectedReferenceVideo));
+  tree = render(React.createElement(registeredComponent, {}));
+  await flushEffects();
+  assert.equal(mediaCalls.length, 2, "opening a local reference should fetch it from the media API");
+  assert.ok(mediaCalls[1].url.endsWith("/references/vertical%2Fstyle%20reference.mp4"),
+    "local reference path segments should be encoded and use the References endpoint");
+  for (const cleanup of effectCleanups.splice(0)) cleanup();
+  assert.deepEqual(revokedBlobUrls, ["blob:loaded", "blob:loaded"], "closing should release both temporary video URLs");
 
   resetHooks(baseState());
   tree = render(React.createElement(registeredComponent, {}));

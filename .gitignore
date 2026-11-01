@@ -3,3 +3,22 @@ __pycache__/
 .pytest_cache/
 .coverage
 .DS_Store
+
+# Credentials and local-only environments
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local workspaces and generated dependencies
+node_modules/
+.venv/
+.cache/
+cache/
+tmp/
+temp/
+*.log
+*.tmp
+/workspace/*
+!/workspace/.gitkeep

@@ -1,7 +1,7 @@
 <div align="center">
   <h1>🎬 Agent Editor</h1>
   <p><strong>Un espace local pour retrouver, annoter et préparer vos clips vidéo.</strong></p>
-  <p>Plugin pour Hermes Dashboard — conçu autour de vos enregistrements <code>Waiting</code> et de vos clips <code>Finish</code>.</p>
+  <p>Plugin pour Hermes Desktop et Dashboard — conçu autour de vos enregistrements <code>Waiting</code> et de vos clips <code>Finish</code>.</p>
 </div>
 
 ---
@@ -21,6 +21,8 @@
 - **Références éditoriales** — liens HTTPS YouTube et TikTok, notes et liste de points d’observation (accroche, rythme, cadrage, sous-titres, audio et payoff). Les liens sont enregistrés, pas visités ni téléchargés.
 - **Skills locaux** — création de skills personnalisés conservés dans le dossier du plugin.
 - **Médias protégés** — les routes API utilisent l’authentification normale du Dashboard; les chemins de fichiers sont confinés aux dossiers prévus et les liens symboliques sont refusés.
+- **Section Hermes Desktop « Agent Editor »** — bibliothèque `Waiting` / `References` / `Finish`, ajout/retrait de liens YouTube/TikTok et création de repères horodatés depuis le client natif.
+- **Sources en lecture seule** — la page Desktop ne déplace, ne transcode et ne modifie aucun MP4.
 
 ## Installation
 
@@ -40,23 +42,43 @@
    ```
 
    Si `HERMES_HOME` n’est pas défini, Hermes utilise normalement `~/.hermes`.
-2. Placez vos enregistrements dans les dossiers suivants :
+2. Préparez le point de montage média dans le dossier du plugin :
 
    ```text
-   $HERMES_HOME/inbox/stream-test/Waiting/
-   $HERMES_HOME/inbox/stream-test/Finish/
+   $HERMES_HOME/plugins/video-agent/workspace/
+   ├── Waiting/       # rediffusions à traiter
+   ├── References/    # MP4 locaux d’inspiration + links.json pour les liens/notes
+   └── Finish/        # clips terminés
    ```
 
-3. Redémarrez le gateway ou le service Hermes qui charge les plugins, puis actualisez le Dashboard.
+   Montez votre volume/dataset sur `workspace/` et assurez-vous que le processus du gateway peut lire les vidéos et écrire dans `References/links.json`. `Waiting`, `References` et `Finish` acceptent des sous-dossiers et sont parcourus récursivement.
+3. Le plugin active ce workspace quand les trois dossiers existent. Jusqu’à ce qu’il soit prêt, il conserve l’ancien chemin `$HERMES_HOME/inbox/stream-test/` comme repli; **aucun fichier existant n’est déplacé**. Un chemin absolu différent peut être fourni par `VIDEO_AGENT_WORKSPACE`.
+4. Démarrez ou rechargez le service Hermes qui héberge le plugin, puis actualisez le Dashboard.
+5. Pour les commandes et la page Desktop, activez le paquet Agent Plugin avec `hermes plugins enable video-agent`; dans Hermes Desktop, assurez-vous que **Agent Editor** est activé dans **Settings → Plugins**. L’entrée Desktop est `desktop/plugin.js`; l’application surveille les plugins Desktop et les recharge en direct. Si le nouvel onglet ne paraît pas, utilisez **Reload desktop plugins** dans la palette de commandes (`⌘K`).
 
-`Waiting` est parcouru récursivement. `Finish` est présenté comme bibliothèque secondaire; les clips sont associés à une source par leur nom de fichier (nom de base suivi de `_`), et non par des métadonnées de projet.
+Seul le marqueur `workspace/.gitkeep` est versionné; le reste de `workspace/` est ignoré, donc ni les MP4 ni les données montées ne seront ajoutés au dépôt public. Les liens/notes sont enregistrés dans `References/links.json` quand le workspace est actif; les références existantes dans `$HERMES_HOME/state/waiting-studio/references.json` restent lisibles jusqu’à la première modification dans le workspace. Les brouillons, repères et dérivés de compatibilité restent pour l’instant sous `$HERMES_HOME/state/waiting-studio/` afin d’éviter une migration implicite.
+
+## Versionnement et mises à jour
+
+Le plugin porte actuellement la version `0.2.0` dans ses manifestes :
+
+- `plugin.yaml` — identité du paquet Agent Plugin et du compagnon Desktop.
+- `plugin.json` — version du paquet portable Agent Plugins.
+- `dashboard/manifest.json` — version facultative du tab Dashboard.
+
+On gardera ces valeurs identiques et on suivra SemVer (`MAJOR.MINOR.PATCH`) : correction compatible = patch, nouvelle fonctionnalité compatible = minor, changement incompatible = major. Un tag Git `vX.Y.Z` servira à marquer une release humaine et à retrouver facilement son commit.
+
+Le numéro de version **ne déclenche pas** la mise à jour. La révision Git est ce qui détermine le code installé : un push sur `main` publie le nouveau code, mais ne met pas à jour à lui seul une copie déjà installée. Pour une installation Git suivie par le gestionnaire Hermes, `hermes plugins check-updates` vérifie l’état sans modifier les fichiers, et `hermes plugins update video-agent` applique l’update. Les installs Git non épinglées sont comparées au `HEAD` distant; une install épinglée à un SHA reste épinglée jusqu’à ce qu’on installe explicitement un nouveau SHA. Un clone créé à la main doit d’abord être adopté par le gestionnaire (`hermes plugins adopt video-agent`) pour être suivi. Ces commandes dépendent de la version de Hermes installée; elles ne sont pas lancées depuis ce dépôt.
+
+`video-agent` n’est pas présent dans le catalogue officiel Hermes : son mode d’update, si on utilise le gestionnaire, est celui d’un plugin Git personnalisé. Après une mise à jour, il faut rafraîchir le Dashboard; les changements backend dépendent du rechargement du processus qui héberge le plugin. Aucun redémarrage ni push n’est fait automatiquement par ce projet.
 
 ## Données et confidentialité
 
-- Les fichiers vidéo source restent dans `inbox/stream-test/`; le plugin ne les modifie pas.
+- Les fichiers `Waiting`, `References` et `Finish` sont lus depuis `workspace/` quand les trois dossiers du workspace sont présents; sinon, l’ancien dossier `inbox/stream-test/` reste utilisé.
+- Les MP4 sources sont en lecture seule pour le plugin. Les sous-dossiers sont inventoriés sans suivre les liens symboliques.
+- Les liens et notes YouTube/TikTok sont enregistrés dans `workspace/References/links.json` lorsque le montage est actif; le plugin ne visite pas les liens et ne télécharge pas ces vidéos.
 - Les miniatures sont produites à la demande, conservées dans un cache mémoire borné et ne sont pas écrites sur disque.
-- Les brouillons, repères et références sont enregistrés sous `$HERMES_HOME/state/waiting-studio/`. Ce nom de répertoire historique est conservé afin de retrouver les données existantes malgré le renommage du plugin.
-- Les copies HVC1 facultatives utilisées pour la compatibilité de lecture se trouvent dans `$HERMES_HOME/state/waiting-studio/compat/`, séparées des originaux.
+- Les brouillons, les repères et les copies HVC1 facultatives restent sous `$HERMES_HOME/state/waiting-studio/` (copies de compatibilité dans `compat/`); aucune donnée n’est déplacée lors de l’activation du mount.
 - Les skills créés par l’interface sont enregistrés dans `skills/<nom>/SKILL.md` sous le dossier `video-agent`.
 - Les routes API et les flux média restent protégés par l’authentification du Dashboard. En mode local à jeton, le lecteur transmet le jeton en mémoire et le service worker l’ajoute uniquement aux requêtes média autorisées; il n’est pas placé dans l’URL ni écrit sur disque.
 
@@ -66,10 +88,11 @@ Les routes sont montées sous `/api/plugins/video-agent` et restent protégées 
 
 | Méthode | Route | Rôle |
 |---|---|---|
-| `GET` | `/videos` | Inventaire des dossiers `Waiting` et `Finish`. |
+| `GET` | `/videos` | Inventaire des dossiers `Waiting`, `References` et `Finish`. |
 | `GET` | `/videos/waiting/{filename}` | Lecture d’un MP4 de `Waiting`; prise en charge des requêtes Range et du choix de codec. |
 | `GET` | `/videos/waiting-thumbnails/{filename}` | Miniature JPEG produite à la demande. |
-| `GET` | `/videos/finish/{filename}` | Lecture d’un MP4 directement dans `Finish`. |
+| `GET` | `/videos/references/{filename}` | Lecture d’un MP4 local de référence; prise en charge des requêtes Range. |
+| `GET` | `/videos/finish/{filename}` | Lecture d’un MP4 de `Finish`, y compris dans un sous-dossier. |
 | `GET`, `POST` | `/skills` | Lister ou créer un skill local validé. |
 | `GET` | `/references` | Lister les références YouTube/TikTok. |
 | `POST` | `/references` | Ajouter une référence et ses notes d’observation. |
@@ -83,6 +106,7 @@ Les chemins sont relatifs aux dossiers média autorisés; les chemins arbitraire
 ## Limites actuelles
 
 - Les brouillons sont des notes éditoriales; aucun fichier vidéo n’est créé ou rendu.
+- Dans Desktop, les repères utilisent actuellement un timecode saisi à la main : la lecture progressive du Dashboard ne peut pas être réutilisée directement par le client natif sans une passerelle de streaming authentifiée prise en charge par Hermes.
 - Les références YouTube/TikTok ne sont ni analysées ni téléchargées.
 - La publication sur YouTube, TikTok ou une autre plateforme n’est pas effectuée.
 - Les miniatures nécessitent FFmpeg. Sans FFmpeg, l’inventaire reste disponible, mais les aperçus peuvent échouer.
@@ -94,6 +118,8 @@ Depuis la racine du plugin, avec l’interpréteur Python du gateway (FastAPI/St
 ```bash
 python -m unittest discover -s tests -v
 python -m py_compile dashboard/plugin_api.py tests/test_plugin_api.py
+node --check desktop/plugin.js
+node tests/test_desktop_plugin.js
 node --check dashboard/dist/index.js
 node --check dashboard/media-service-worker.js
 node --check dashboard/media-player.js
@@ -108,11 +134,19 @@ python -m json.tool plugin.json
 
 ```text
 video-agent/
+├── CHANGELOG.md                 # Historique des versions
+├── plugin.yaml                  # Identité du paquet Agent Plugin
 ├── plugin.json                  # Manifeste du plugin portable
+├── desktop/
+│   └── plugin.js                # Page et navigation Hermes Desktop
+├── workspace/                   # Point de montage local, exclu de Git
+│   ├── Waiting/                 # VODs à traiter
+│   ├── References/               # MP4 locaux et links.json
+│   └── Finish/                  # Clips terminés
 ├── dashboard/
 │   ├── manifest.json            # Onglet Agent Editor
-│   ├── plugin_api.py            # Routes protégées et accès média
+│   ├── plugin_api.py             # Routes protégées et accès média
 │   ├── dist/                    # Interface du Dashboard
-│   └── media-player.*           # Lecteur progressif et service worker
-└── tests/                       # Tests API, interface et lecteur
+│   └── media-player.*            # Lecteur progressif et service worker
+└── tests/                        # Tests API, interface et lecteur
 ```

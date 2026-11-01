@@ -141,7 +141,8 @@
     const folder = props.folder;
     const videos = Array.isArray(folder.videos) ? folder.videos : [];
     const count = Number.isInteger(folder.count) ? folder.count : videos.length;
-    const titleId = `video-agent-${folder.id}-title`;
+    const titleId = `video-agent-library-${folder.id}-title`;
+    const isPlayable = folder.id === "finish" || folder.id === "references";
 
     let content;
     if (props.loading && !props.hasSnapshot) {
@@ -162,8 +163,11 @@
       content = h(
         "ul",
         { className: "wvs__list", "aria-label": `Vidéos ${folder.label}` },
-        videos.map((video) =>
-          h(
+        videos.map((video) => {
+          const playVideo = () => props.onPlay(
+            folder.id === "references" ? { ...video, folderId: "references" } : video,
+          );
+          return h(
             "li",
             { className: `wvs__item${folder.id === "waiting" ? " wvs__item--waiting" : ""}`, key: `${folder.id}:${video.name}` },
             folder.id === "waiting" ? h(VideoThumbnail, { video, key: `thumbnail:${video.name}` }) : null,
@@ -171,12 +175,12 @@
             h(
               "span",
               { className: "wvs__file-details" },
-              folder.id === "finish"
+              isPlayable
                 ? h("button", {
                     className: "wvs__filename wvs__filename-button",
                     type: "button",
                     title: video.name,
-                    onClick: () => props.onPlay(video),
+                    onClick: playVideo,
                     "aria-label": `Lire ${video.name}`,
                   }, video.name)
                 : folder.id === "waiting"
@@ -190,22 +194,30 @@
                   : h("span", { className: "wvs__filename", title: video.name }, video.name),
               h("span", { className: "wvs__filesize" }, formatBytes(video.sizeBytes)),
             ),
-            folder.id === "finish"
+            isPlayable
               ? h(
                   "button",
                   {
                     className: "wvs__play",
                     type: "button",
-                    onClick: () => props.onPlay(video),
+                    onClick: playVideo,
                     "aria-label": `Lire ${video.name}`,
                   },
                   "Lire",
                 )
               : null,
-          ),
-        ),
+          );
+        }),
       );
     }
+
+    const subtitle = folder.id === "finish"
+      ? "MP4 · cliquez sur le nom ou sur Lire pour prévisualiser"
+      : folder.id === "waiting"
+        ? "Cliquez sur une rediffusion pour ouvrir son espace de contenu"
+        : folder.id === "references"
+          ? "Vidéos locales d’inspiration · lecture en prévisualisation"
+          : "Fichiers MP4";
 
     return h(
       "section",
@@ -217,7 +229,7 @@
           "div",
           null,
           h("h2", { className: "wvs__panel-title", id: titleId }, folder.label),
-          h("p", { className: "wvs__panel-subtitle" }, folder.id === "finish" ? "MP4 · cliquez sur le nom ou sur Lire pour prévisualiser" : folder.id === "waiting" ? "Cliquez sur une rediffusion pour ouvrir son espace de contenu" : "Fichiers MP4"),
+          h("p", { className: "wvs__panel-subtitle" }, subtitle),
         ),
         h("span", { className: "wvs__count" }, pluralizeVideo(count)),
       ),
@@ -287,7 +299,8 @@
 
       async function loadVideo() {
         try {
-          const url = `${API_URL}/finish/${encodeURIComponent(props.video.name)}`;
+          const videoCollection = props.video.folderId === "references" ? "references" : "finish";
+          const url = `${API_URL}/${videoCollection}/${encodeURIComponent(props.video.name)}`;
           const response = await SDK.authedFetch(url, { signal: controller.signal });
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           const videoBlob = await response.blob();
@@ -370,7 +383,7 @@
           "header",
           { className: "wvs__dialog-header" },
           h("div", { className: "wvs__dialog-heading" },
-            h("p", { className: "wvs__eyebrow" }, "FINISH · PRÉVISUALISATION"),
+            h("p", { className: "wvs__eyebrow" }, props.video.folderId === "references" ? "RÉFÉRENCE LOCALE · PRÉVISUALISATION" : "FINISH · PRÉVISUALISATION"),
             h("h2", { className: "wvs__dialog-title", id: titleId }, props.video.name),
           ),
           h("button", { className: "wvs__close", type: "button", onClick: props.onClose, "aria-label": "Fermer le lecteur" }, "Fermer"),
@@ -1152,11 +1165,13 @@
     const folders = snapshot && Array.isArray(snapshot.folders) ? snapshot.folders : [];
     const fallbackFolders = [
       { id: "waiting", label: "Waiting", available: true, count: 0, videos: [] },
+      { id: "references", label: "References", available: true, count: 0, videos: [] },
       { id: "finish", label: "Finish", available: true, count: 0, videos: [] },
     ];
     const activeFolders = folders.length ? folders : fallbackFolders;
     const waitingFolder = activeFolders.find((folder) => folder.id === "waiting") || fallbackFolders[0];
-    const finishFolder = activeFolders.find((folder) => folder.id === "finish") || (!snapshot ? fallbackFolders[1] : null);
+    const referenceFolder = activeFolders.find((folder) => folder.id === "references") || (!snapshot ? fallbackFolders[1] : null);
+    const finishFolder = activeFolders.find((folder) => folder.id === "finish") || (!snapshot ? fallbackFolders[2] : null);
 
     return h(
       "div",
@@ -1167,9 +1182,9 @@
         h(
           "div",
           { className: "wvs__heading" },
-          h("p", { className: "wvs__eyebrow" }, "BIBLIOTHÈQUE WAITING"),
-          h("h1", { className: "wvs__title" }, "Mes rediffusions"),
-          h("p", { className: "wvs__intro" }, "Choisis une vidéo de Waiting pour retrouver ses repères, ses brouillons et les clips créés dans Finish. Les fichiers source restent intacts."),
+          h("p", { className: "wvs__eyebrow" }, "BIBLIOTHÈQUE AGENT EDITOR"),
+          h("h1", { className: "wvs__title" }, "Mes vidéos"),
+          h("p", { className: "wvs__intro" }, "Organise Waiting, tes vidéos locales de référence et Finish depuis un seul workspace. Ouvre une rediffusion de Waiting pour retrouver ses repères et brouillons; les fichiers source restent intacts."),
         ),
         h("button", { className: "wvs__refresh", type: "button", onClick: refresh, disabled: loading, "aria-busy": loading }, loading ? "Actualisation…" : "Actualiser"),
       ),
@@ -1191,10 +1206,16 @@
             h(VideoSection, { folder: finishFolder, loading, hasSnapshot: Boolean(snapshot), error, onPlay: setSelectedVideo, onOpenContent: setSelectedContentSource }),
           )
         : null,
+      referenceFolder
+        ? h("details", { className: "wvs__finish-library wvs__reference-library" },
+            h("summary", null, `Parcourir les vidéos de référence locales · ${referenceFolder.count}`),
+            h(VideoSection, { folder: referenceFolder, loading, hasSnapshot: Boolean(snapshot), error, onPlay: setSelectedVideo, onOpenContent: setSelectedContentSource }),
+          )
+        : null,
       h(SkillSection, { skills, skillsLoading, skillsError, onCreate: createSkill }),
       h(VideoPlayer, { video: selectedVideo, onClose: closePlayer }),
       h(ReferenceSection, null),
-      h("p", { className: "wvs__footnote" }, "Les skills sont conservés dans ce dossier de plugin et deviennent actifs après le redémarrage du gateway. Les liens de référence sont conservés dans les données locales d’Hermes; le lecteur charge le MP4 sélectionné dans le navigateur et ne modifie aucun fichier source."),
+      h("p", { className: "wvs__footnote" }, "Waiting, References et Finish sont lus depuis le point de montage workspace quand ses trois dossiers sont prêts; sinon l’ancien chemin demeure utilisé. Les liens de référence vont dans References/links.json lorsque le workspace est actif; brouillons et repères restent dans les données d’état locales d’Hermes. Les prévisualisations Finish/References chargent le fichier choisi dans le navigateur; aucun MP4 source n’est modifié. Les skills personnalisés deviennent actifs après le redémarrage du gateway."),
     );
   }
 
