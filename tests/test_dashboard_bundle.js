@@ -112,6 +112,13 @@ const windowStub = {
         storedMoments = [...storedMoments, moment];
         return { moment };
       }
+      if (init && init.method === "POST" && url.endsWith("/references")) {
+        const payload = JSON.parse(init.body);
+        return { reference: { id: "reference-new", platform: "YouTube", ...payload, downloadStatus: "queued" } };
+      }
+      if (init && init.method === "POST" && url.endsWith("/references/reference-1/download")) {
+        return { reference: { ...savedReference, downloadStatus: "queued" } };
+      }
       if (init && init.method === "POST") {
         return {
           skill: { name: "clip-review", description: "Review finished clips." },
@@ -131,7 +138,7 @@ const windowStub = {
         };
       }
       if (url.endsWith("/videos")) return snapshot;
-      if (url.endsWith("/references")) return { references: [] };
+      if (url.endsWith("/references")) return { references: [savedReference] };
       return { skills: [] };
     },
     authedFetch: async (url, init) => {
@@ -149,6 +156,8 @@ const windowStub = {
   removeEventListener(eventName, handler) {
     if (windowHandlers[eventName] === handler) delete windowHandlers[eventName];
   },
+  setInterval() { return 1; },
+  clearInterval() {},
 };
 
 global.window = windowStub;
@@ -211,6 +220,7 @@ const savedReference = {
   url: "https://youtu.be/example123",
   note: "Observer l’accroche.",
   observationChecklist,
+  downloadStatus: "not_requested",
 };
 let storedDrafts = [];
 let storedMoments = [];
@@ -253,6 +263,20 @@ async function main() {
     "short-form reference section should render");
   assert.equal(findAll(tree, (node) => node.type === "form" && node.props.className === "wvs__reference-form").length, 1,
     "reference section should expose a link form");
+  await flushEffects();
+  hookIndex = 0;
+  pendingEffects.length = 0;
+  tree = render(React.createElement(registeredComponent, {}));
+  const legacyDownloadButton = findAll(tree, (node) => node.type === "button" && node.props.className === "wvs__remove" && node.children?.includes("Télécharger"))[0];
+  assert.ok(legacyDownloadButton, "an older saved reference with no local copy should expose a download button");
+  await legacyDownloadButton.props.onClick();
+  assert.ok(apiCalls.some((call) => call.url.endsWith("/references/reference-1/download") && call.init.method === "POST"),
+    "downloading a saved reference should queue it through its API endpoint");
+  hookIndex = 0;
+  pendingEffects.length = 0;
+  tree = render(React.createElement(registeredComponent, {}));
+  assert.ok(findAll(tree, (node) => node.props && node.props.role === "status" && (node.children || []).includes("Téléchargement en attente…")).length > 0,
+    "the UI should show queued status after requesting a local copy");
 
   const filenameButton = findAll(tree, (node) => node.type === "button" && String(node.props.className).includes("wvs__filename-button") && node.props.title === finalVideo.name)[0];
   assert.ok(filenameButton, "Finish filename should itself be clickable");
@@ -326,7 +350,7 @@ async function main() {
   tree = render(React.createElement(registeredComponent, {}));
   const form = findAll(tree, (node) => node.type === "form" && node.props.className === "wvs__skill-form")[0];
   await form.props.onSubmit({ preventDefault() {} });
-  const post = apiCalls.find((call) => call.init && call.init.method === "POST");
+  const post = apiCalls.find((call) => call.url.endsWith("/skills") && call.init && call.init.method === "POST");
   assert.ok(post, "adding a skill should use the authenticated JSON API");
   assert.equal(post.url, "/api/plugins/video-agent/skills");
   assert.equal(JSON.parse(post.init.body).name, "clip-review");
@@ -353,7 +377,7 @@ async function main() {
   const referenceLink = findAll(tree, (node) => node.type === "a" && node.props.className === "wvs__reference-link")[0];
   assert.equal(referenceLink.props.target, "_blank");
   assert.equal(referenceLink.props.rel, "noopener noreferrer");
-  const removeReferenceButton = findAll(tree, (node) => node.type === "button" && node.props.className === "wvs__remove")[0];
+  const removeReferenceButton = findAll(tree, (node) => node.type === "button" && node.props.className === "wvs__remove" && node.children?.includes("Retirer"))[0];
   await removeReferenceButton.props.onClick();
   assert.ok(apiCalls.some((call) => call.url.endsWith("/references/reference-1") && call.init.method === "DELETE"),
     "reference removal should use the authenticated JSON API");

@@ -52,6 +52,13 @@ const sampleMediaSource = {
   mediaPath: path.join(path.resolve(__dirname, ".."), "workspace with spaces", "Waiting", "records", "waiting vod #100%.mp4"),
 };
 const sampleMediaUrl = `hermes-media://remote/${encodeURIComponent(sampleMediaSource.mediaPath)}`;
+const existingReference = {
+  id: "legacy-reference-1",
+  platform: "YouTube",
+  url: "https://youtu.be/legacy123",
+  note: "Déjà enregistré, sans copie locale.",
+  downloadStatus: "not_requested",
+};
 sandbox.React = {
   useState(initialValue) {
     const componentStates = hookStates.get(currentComponent) || [];
@@ -73,7 +80,7 @@ sandbox.useQuery = options => {
   const { queryKey } = options;
   queryOptions.push(options);
   if (queryKey[1] === "videos") return { data: { folders: sampleFolders }, isLoading: false, refetch() {} };
-  if (queryKey[1] === "references") return { data: { references: [] }, isLoading: false, refetch() {} };
+  if (queryKey[1] === "references") return { data: { references: [existingReference] }, isLoading: false, refetch() {} };
   if (queryKey[1] === "media-source") return { data: { mediaUrl: sampleMediaUrl }, isLoading: false, error: null, refetch() {} };
   return contentQueryState;
 };
@@ -203,16 +210,24 @@ const referenceUrlInput = findNode(page, node => node.type === "input" && node.p
 const referenceNoteInput = findNode(page, node => node.type === "textarea" && node.props.id === "agent-editor-reference-note");
 assert.ok(referenceUrlInput && referenceNoteInput, "Reference controls should render");
 assert.ok(findNode(page, node => node.type === "video" && node.props["aria-label"] === "Lecture de vertical/style.mp4"), "Local reference videos should be playable");
+const downloadExistingReference = findNode(page, node => node.type === "button" && collectText(node).includes("Télécharger la copie locale"));
+assert.ok(downloadExistingReference, "An existing reference without a local copy should expose a download action");
+assert.equal(queryOptions.filter(options => options.queryKey[1] === "references").at(-1).refetchInterval, 3000, "Reference state should refresh while the References tab is active");
+downloadExistingReference.props.onClick();
+assert.deepEqual(JSON.parse(JSON.stringify(apiCalls.find(call => call.url === "/references/legacy-reference-1/download"))), {
+  url: "/references/legacy-reference-1/download",
+  options: { method: "POST" },
+});
 referenceUrlInput.props.onChange({ target: { value: "https://youtu.be/example" } });
 referenceNoteInput.props.onChange({ target: { value: "Rythme et cadrage" } });
 page = renderPage();
 const referenceForm = findNode(page, node => node.type === "form" && typeof node.props.onSubmit === "function");
 referenceForm.props.onSubmit({ preventDefault() {} });
-assert.deepEqual(JSON.parse(JSON.stringify(apiCalls[1])), {
+assert.deepEqual(JSON.parse(JSON.stringify(apiCalls.find(call => call.url === "/references"))), {
   url: "/references",
   options: { method: "POST", body: { url: "https://youtu.be/example", note: "Rythme et cadrage" } },
 });
-assert.equal(mutationCalls.length, 2);
+assert.equal(mutationCalls.length, 3);
 
 assert.equal(moduleStub.exports.parseTimecode("01:02"), 62);
 assert.equal(moduleStub.exports.parseTimecode("01:02:03.5"), 3723.5);
@@ -236,7 +251,7 @@ assert.equal(moduleStub.exports.formatTimecode(3723.5), "01:02:03.500");
   assert.equal(sourceQuery.queryKey[3], "records/waiting-vod.mp4");
   const mediaSource = await sourceQuery.queryFn();
   assert.equal(mediaSource.mediaUrl, sampleMediaUrl);
-  assert.deepEqual(JSON.parse(JSON.stringify(apiCalls[2])), {
+  assert.deepEqual(JSON.parse(JSON.stringify(apiCalls.find(call => call.url === "/video-media-source"))), {
     url: "/video-media-source",
     options: { method: "POST", body: { folderId: "waiting", filename: "records/waiting-vod.mp4" } },
   });

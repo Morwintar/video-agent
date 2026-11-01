@@ -1,7 +1,9 @@
 name: video-agent
-version: 0.4.2
+version: 0.5.0
 manifest_version: 1
 kind: standalone
-description: "Agent Editor: organiser et lire les MP4 locaux; conserver les liens, notes et repères vidéo."
+description: "Agent Editor: organiser et lire les MP4 locaux; télécharger des copies de vidéos de référence et conserver liens, notes et repères vidéo."
+pip_dependencies:
+  - yt-dlp==2026.10.26
 provides_tools: []
 provides_hooks: []

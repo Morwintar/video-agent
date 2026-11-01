@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "video-agent",
-  "version": "0.4.2",
-  "description": "Agent Editor: secure local MP4 playback, video moments, and custom workflow skills for Hermes.",
+  "version": "0.5.0",
+  "description": "Agent Editor: secure local MP4 playback, managed reference video downloads, video moments, and custom workflow skills for Hermes.",
   "keywords": ["hermes", "video", "dashboard", "skills"],
   "extensions": {}
 }

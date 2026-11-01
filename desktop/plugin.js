@@ -276,6 +276,10 @@ function ReferenceLibrary({ rest, openExternal, localVideos, selectedVideo, refe
     mutationFn: referenceId => rest(`/references/${encodeURIComponent(referenceId)}`, { method: 'DELETE' }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: [...QUERY_ROOT, 'references'] }),
   })
+  const downloadMutation = useMutation({
+    mutationFn: referenceId => rest(`/references/${encodeURIComponent(referenceId)}/download`, { method: 'POST' }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [...QUERY_ROOT, 'references'] }),
+  })
   const references = Array.isArray(referencesQuery.data?.references) ? referencesQuery.data.references : []
 
   function submitReference(event) {
@@ -283,12 +287,20 @@ function ReferenceLibrary({ rest, openExternal, localVideos, selectedVideo, refe
     referenceMutation.mutate({ url: url.trim(), note: note.trim() })
   }
 
+  function downloadStatus(reference) {
+    if (reference.downloadStatus === 'queued') return 'Téléchargement en attente…'
+    if (reference.downloadStatus === 'downloading') return 'Téléchargement en cours…'
+    if (reference.downloadStatus === 'completed') return `Copie locale prête · ${reference.videoFile || 'MP4 dans References'}`
+    if (reference.downloadStatus === 'failed') return reference.downloadError || 'Téléchargement échoué.'
+    return 'Copie locale non téléchargée.'
+  }
+
   return jsxs('div', {
     className: 'grid min-h-0 grid-cols-1 gap-4 xl:grid-cols-2',
     children: [
       jsxs(Panel, {
         title: `Liens et notes · ${references.length}`,
-        description: 'Les liens YouTube/TikTok sont enregistrés sans téléchargement ni visite automatique.',
+        description: 'Les liens autorisés sont copiés en MP4 dans References et restent lisibles dans la bibliothèque locale.',
         children: [
           jsx('form', {
             className: 'flex flex-col gap-3',
@@ -307,8 +319,12 @@ function ReferenceLibrary({ rest, openExternal, localVideos, selectedVideo, refe
             children: references.map(reference => jsxs('li', {
               className: 'flex flex-col gap-2 rounded-md border border-(--ui-stroke-secondary) p-3',
               children: [
-                jsxs('div', { className: 'flex items-start justify-between gap-3', children: [jsx('button', { type: 'button', className: 'break-all text-left text-sm text-(--ui-accent) underline', onClick: () => openExternal(reference.url), children: reference.platform || 'Référence' }), jsx('button', { type: 'button', className: buttonClass(), onClick: () => { if (globalThis.confirm?.('Retirer cette référence de la bibliothèque?')) deleteMutation.mutate(reference.id) }, disabled: deleteMutation.isPending, children: 'Retirer' })] }),
+                jsxs('div', { className: 'flex items-start justify-between gap-3', children: [jsx('button', { type: 'button', className: 'break-all text-left text-sm text-(--ui-accent) underline', onClick: () => openExternal(reference.url), children: reference.platform || 'Référence' }), jsx('button', { type: 'button', className: buttonClass(), onClick: () => { if (globalThis.confirm?.(reference.videoFile ? 'Retirer la référence et supprimer sa copie locale?' : 'Retirer cette référence de la bibliothèque?')) deleteMutation.mutate(reference.id) }, disabled: deleteMutation.isPending, children: 'Retirer' })] }),
                 reference.note ? jsx('p', { className: 'whitespace-pre-wrap break-words text-sm text-(--ui-text-secondary)', children: reference.note }) : null,
+                jsx('p', { className: 'text-xs text-(--ui-text-tertiary)', role: reference.downloadStatus === 'queued' || reference.downloadStatus === 'downloading' ? 'status' : undefined, children: downloadStatus(reference) }),
+                ['not_requested', 'failed'].includes(reference.downloadStatus || 'not_requested')
+                  ? jsx('button', { type: 'button', className: buttonClass(), onClick: () => downloadMutation.mutate(reference.id), disabled: downloadMutation.isPending, children: reference.downloadStatus === 'failed' ? 'Réessayer le téléchargement' : 'Télécharger la copie locale' })
+                  : null,
               ],
             }, reference.id)),
           }) : !referencesQuery.isLoading && !referencesQuery.error ? jsx('p', { className: 'text-sm text-(--ui-text-tertiary)', children: 'Ajoute une référence pour la retrouver ici.' }) : null,
@@ -333,11 +349,13 @@ function AgentEditorPage({ rest, openExternal }) {
     queryKey: [...QUERY_ROOT, 'videos'],
     queryFn: () => rest('/videos'),
     staleTime: 10000,
+    refetchInterval: activeFolder === 'references' ? 3000 : false,
   })
   const referencesQuery = useQuery({
     queryKey: [...QUERY_ROOT, 'references'],
     queryFn: () => rest('/references'),
     staleTime: 10000,
+    refetchInterval: activeFolder === 'references' ? 3000 : false,
   })
   const folders = Array.isArray(videosQuery.data?.folders) ? videosQuery.data.folders : []
   const currentFolder = folders.find(folder => folder.id === activeFolder)

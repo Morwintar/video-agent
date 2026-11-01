@@ -5,6 +5,12 @@ Les changements notables du projet sont consignés ici. Les versions suivent
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-01
+
+### Added
+- Références enregistrées en état `not_requested` avec une action UI explicite **Télécharger**; possibilité de relancer les références plus anciennes qui n’ont pas de copie locale.
+- Téléchargement asynchrone automatique lors de l’ajout d’une référence via la dépendance déclarée `yt-dlp==2026.10.26`; copie MP4 gérée, statut en cours/terminé/échec et suppression limitée à cette copie.
+
 ### Changed
 - Quand Agent Editor sélectionne un MP4 plus grand que la limite courante, le backend du plugin relève en mémoire le plafond privé du Gateway jusqu’à la taille de ce fichier, sans dépasser 30 Gio; le changement s’applique aux autres opérations de fichiers gérés jusqu’au redémarrage du Gateway.
 - Ce contournement exige l’isolation `in_process` et dépend d’un détail interne du Gateway; une lecture complète via `/api/files/read` peut consommer beaucoup de mémoire. Retester après chaque mise à jour Hermes.

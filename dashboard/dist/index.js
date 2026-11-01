@@ -526,17 +526,20 @@
     const [note, setNote] = useState("");
     const [saving, setSaving] = useState(false);
     const [removingId, setRemovingId] = useState("");
+    const [retryingId, setRetryingId] = useState("");
     const [notice, setNotice] = useState(null);
 
-    const loadReferences = useCallback(async () => {
-      setLoading(true);
-      setLoadError(false);
+    const loadReferences = useCallback(async (showLoading = true) => {
+      if (showLoading) {
+        setLoading(true);
+        setLoadError(false);
+      }
       try {
         const response = await SDK.fetchJSON(REFERENCES_URL);
         if (!response || !Array.isArray(response.references)) throw new Error("Invalid references response");
         setReferences(response.references);
       } catch (_error) {
-        setLoadError(true);
+        if (showLoading) setLoadError(true);
       } finally {
         setLoading(false);
       }
@@ -545,6 +548,12 @@
     useEffect(() => {
       loadReferences();
     }, [loadReferences]);
+
+    useEffect(() => {
+      if (!references.some((reference) => ["queued", "downloading"].includes(reference.downloadStatus))) return undefined;
+      const intervalId = window.setInterval(() => loadReferences(false), 3000);
+      return () => window.clearInterval(intervalId);
+    }, [references, loadReferences]);
 
     async function submit(event) {
       event.preventDefault();
@@ -560,11 +569,28 @@
         setReferences((current) => [...current, response.reference]);
         setUrl("");
         setNote("");
-        setNotice({ kind: "success", text: "Lien ajouté aux références locales du plugin." });
+        setNotice({ kind: "success", text: "Lien ajouté. La vidéo se télécharge en arrière-plan dans References." });
       } catch (_error) {
         setNotice({ kind: "error", text: "Lien refusé ou impossible à enregistrer. Utilisez une URL HTTPS de YouTube ou TikTok." });
       } finally {
         setSaving(false);
+      }
+    }
+
+    async function retryReference(reference) {
+      setRetryingId(reference.id);
+      setNotice(null);
+      try {
+        const response = await SDK.fetchJSON(`${REFERENCES_URL}/${encodeURIComponent(reference.id)}/download`, {
+          method: "POST",
+        });
+        if (!response || !response.reference) throw new Error("Invalid download response");
+        setReferences((current) => current.map((item) => item.id === reference.id ? response.reference : item));
+        setNotice({ kind: "success", text: "Téléchargement remis en file d’attente." });
+      } catch (_error) {
+        setNotice({ kind: "error", text: "Impossible de démarrer le téléchargement; réessayez." });
+      } finally {
+        setRetryingId("");
       }
     }
 
@@ -607,6 +633,22 @@
                 rel: "noopener noreferrer",
               }, reference.url),
               reference.note ? h("p", { className: "wvs__reference-note" }, reference.note) : null,
+              h("p", {
+                className: "wvs__reference-note",
+                role: ["queued", "downloading"].includes(reference.downloadStatus) ? "status" : undefined,
+              }, reference.downloadStatus === "queued" ? "Téléchargement en attente…"
+                : reference.downloadStatus === "downloading" ? "Téléchargement en cours…"
+                  : reference.downloadStatus === "completed" ? `Copie locale prête · ${reference.videoFile || "MP4 dans References"}`
+                    : reference.downloadStatus === "failed" ? (reference.downloadError || "Téléchargement échoué.")
+                      : "Copie locale non téléchargée."),
+              ["failed", "not_requested", undefined].includes(reference.downloadStatus)
+                ? h("button", {
+                  className: "wvs__remove",
+                  type: "button",
+                  onClick: () => retryReference(reference),
+                  disabled: retryingId === reference.id,
+                }, retryingId === reference.id ? "Mise en file…" : reference.downloadStatus === "failed" ? "Réessayer" : "Télécharger")
+                : null,
               h("details", { className: "wvs__reference-observations" },
                 h("summary", null, "Points à observer à la création"),
                 h("ul", { className: "wvs__observation-list" },
@@ -619,7 +661,11 @@
             h("button", {
               className: "wvs__remove",
               type: "button",
-              onClick: () => removeReference(reference),
+              onClick: () => {
+                const message = reference.videoFile ? "Retirer la référence et supprimer sa copie locale?" : "Retirer cette référence?";
+                if (window.confirm && !window.confirm(message)) return;
+                removeReference(reference);
+              },
               disabled: removingId === reference.id,
               "aria-label": `Retirer le lien ${reference.platform}`,
             }, removingId === reference.id ? "Retrait…" : "Retirer"),

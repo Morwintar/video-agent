@@ -141,7 +141,7 @@ class ScanFolderTests(unittest.TestCase):
             legacy_waiting.mkdir(parents=True)
             (legacy_waiting / "legacy.mp4").write_bytes(b"legacy")
 
-            with patch.dict(os.environ, {"HERMES_HOME": str(home)}), patch(
+            with patch.dict(os.environ, {"HERMES_HOME": str(home), "VIDEO_AGENT_WORKSPACE": str(workspace)}), patch(
                 "plugin_api._plugin_root", return_value=plugin_root
             ):
                 payload = list_videos()
@@ -316,7 +316,7 @@ class NewFeatureTests(unittest.TestCase):
             workspace = plugin_root / "workspace"
             home = root / "hermes"
             home.mkdir()
-            with patch.dict(os.environ, {"HERMES_HOME": str(home)}), patch(
+            with patch.dict(os.environ, {"HERMES_HOME": str(home), "VIDEO_AGENT_WORKSPACE": str(workspace)}), patch(
                 "plugin_api._plugin_root", return_value=plugin_root
             ):
                 legacy_reference = plugin_api._add_reference(
@@ -354,7 +354,7 @@ class NewFeatureTests(unittest.TestCase):
                 (workspace / label).mkdir(parents=True, exist_ok=True)
             home = root / "hermes"
             home.mkdir()
-            with patch.dict(os.environ, {"HERMES_HOME": str(home)}), patch(
+            with patch.dict(os.environ, {"HERMES_HOME": str(home), "VIDEO_AGENT_WORKSPACE": str(workspace)}), patch(
                 "plugin_api._plugin_root", return_value=plugin_root
             ):
                 reference = plugin_api._add_reference(
@@ -494,19 +494,101 @@ class NewFeatureTests(unittest.TestCase):
     def test_reference_registry_persists_in_hermes_home_and_can_remove_entries(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             home = Path(temp_dir)
-            self.assertEqual(plugin_api._list_references(home), [])
-            self.assertFalse((home / "state").exists(), "listing must not create persistent state")
+            with patch.dict(os.environ, {"VIDEO_AGENT_WORKSPACE": str(home / "missing-workspace")}):
+                self.assertEqual(plugin_api._list_references(home), [])
+                self.assertFalse((home / "state").exists(), "listing must not create persistent state")
 
-            reference = plugin_api._add_reference(
-                home,
-                "https://www.youtube.com/shorts/abc123",
-                "Observe le rythme du montage.",
-            )
-            store = home / "state" / "waiting-studio" / "references.json"
-            self.assertEqual(store.stat().st_mode & 0o777, 0o600)
-            self.assertEqual(plugin_api._list_references(home), [reference])
-            self.assertTrue(plugin_api._delete_reference(home, reference["id"]))
-            self.assertEqual(plugin_api._list_references(home), [])
+                reference = plugin_api._add_reference(
+                    home,
+                    "https://www.youtube.com/shorts/abc123",
+                    "Observe le rythme du montage.",
+                )
+                store = home / "state" / "waiting-studio" / "references.json"
+                self.assertEqual(store.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(plugin_api._list_references(home), [reference])
+                self.assertTrue(plugin_api._delete_reference(home, reference["id"]))
+                self.assertEqual(plugin_api._list_references(home), [])
+
+    def test_new_reference_is_queued_for_automatic_download(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            home = Path(temp_dir)
+            with patch.dict(os.environ, {"VIDEO_AGENT_WORKSPACE": str(home / "missing-workspace")}):
+                reference = plugin_api._add_reference(
+                    home,
+                    "https://youtu.be/abc123",
+                    "Observer le style.",
+                )
+                persisted = plugin_api._list_references(home)[0]
+
+        self.assertEqual(reference["downloadStatus"], "queued")
+        self.assertEqual(persisted["downloadStatus"], "queued")
+
+    def test_deleting_reference_removes_only_its_managed_video_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workspace = root / "workspace"
+            references_dir = workspace / "References"
+            downloads = references_dir / "downloads"
+            for name in ("Waiting", "Finish"):
+                (workspace / name).mkdir(parents=True, exist_ok=True)
+            downloads.mkdir(parents=True)
+            unrelated = downloads / "unrelated.mp4"
+            unrelated.write_bytes(b"keep")
+            home = root / "home"
+            home.mkdir()
+            with patch.dict(os.environ, {"VIDEO_AGENT_WORKSPACE": str(workspace)}):
+                reference = plugin_api._add_reference(home, "https://youtu.be/abc123", "")
+                local_copy = downloads / f"{reference['id']}.mp4"
+                local_copy.write_bytes(b"downloaded")
+                reference["videoFile"] = f"downloads/{reference['id']}.mp4"
+                reference["downloadStatus"] = "completed"
+                plugin_api._save_references(home, [reference])
+
+                self.assertTrue(plugin_api._delete_reference(home, reference["id"]))
+
+            self.assertFalse(local_copy.exists())
+            self.assertEqual(unrelated.read_bytes(), b"keep")
+
+    def test_reference_downloader_saves_one_managed_mp4_and_updates_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workspace = root / "workspace"
+            for label in ("Waiting", "References", "Finish"):
+                (workspace / label).mkdir(parents=True, exist_ok=True)
+            home = root / "home"
+            home.mkdir()
+            url = "https://youtu.be/abc123"
+            with patch.dict(os.environ, {"VIDEO_AGENT_WORKSPACE": str(workspace)}):
+                reference = plugin_api._add_reference(home, url, "Style")
+
+                class FakeYoutubeDL:
+                    def __init__(self, options):
+                        self.options = options
+
+                    def __enter__(self):
+                        return self
+
+                    def __exit__(self, *_args):
+                        return None
+
+                    def download(self, urls):
+                        self.assertions = (urls, self.options)
+                        output = Path(self.options["outtmpl"].replace("%(ext)s", "mp4"))
+                        output.write_bytes(b"test MP4")
+                        return 0
+
+                downloader_module = types.SimpleNamespace(YoutubeDL=FakeYoutubeDL)
+                with patch.dict(sys.modules, {"yt_dlp": downloader_module}):
+                    self.assertTrue(hasattr(plugin_api, "_download_reference_video"))
+                    plugin_api._download_reference_video(home, reference["id"])
+
+                persisted = plugin_api._list_references(home)[0]
+                output = workspace / "References" / "downloads" / f"{reference['id']}.mp4"
+
+            self.assertEqual(persisted["downloadStatus"], "completed")
+            self.assertEqual(persisted["videoFile"], f"downloads/{reference['id']}.mp4")
+            self.assertEqual(output.read_bytes(), b"test MP4")
+            self.assertFalse((workspace / ".video-agent-downloads" / reference["id"]).exists())
 
     def test_new_references_capture_the_default_observation_checklist(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -877,6 +959,93 @@ class NewFeatureTests(unittest.TestCase):
         self.assertEqual(missing_source.status_code, 404)
         self.assertEqual(traversal.status_code, 404)
         self.assertTrue(source_unchanged)
+
+    def test_reference_api_add_queues_a_video_download(self) -> None:
+        if not HAS_FASTAPI:
+            self.skipTest("FastAPI/Starlette is unavailable in this Python environment")
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            home = root / "home"
+            home.mkdir()
+            workspace = root / "workspace"
+            for label in ("Waiting", "References", "Finish"):
+                (workspace / label).mkdir(parents=True, exist_ok=True)
+            app = FastAPI()
+            app.include_router(plugin_api.router, prefix="/api/plugins/video-agent")
+            with patch.dict(os.environ, {"HERMES_HOME": str(home), "VIDEO_AGENT_WORKSPACE": str(workspace)}), patch(
+                "plugin_api._schedule_reference_download"
+            ) as schedule_download:
+                with TestClient(app) as client:
+                    created = client.post(
+                        "/api/plugins/video-agent/references",
+                        json={"url": "https://youtu.be/abc123", "note": "Rythme"},
+                    )
+
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.json()["reference"]["downloadStatus"], "queued")
+        schedule_download.assert_called_once_with(home, created.json()["reference"]["id"])
+
+    def test_existing_reference_without_local_copy_can_be_queued_from_api(self) -> None:
+        if not HAS_FASTAPI:
+            self.skipTest("FastAPI/Starlette is unavailable in this Python environment")
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            home = root / "home"
+            home.mkdir()
+            workspace = root / "workspace"
+            for label in ("Waiting", "References", "Finish"):
+                (workspace / label).mkdir(parents=True, exist_ok=True)
+            app = FastAPI()
+            app.include_router(plugin_api.router, prefix="/api/plugins/video-agent")
+            with patch.dict(os.environ, {"HERMES_HOME": str(home), "VIDEO_AGENT_WORKSPACE": str(workspace)}):
+                reference = plugin_api._add_reference(home, "https://youtu.be/abc123", "Older reference")
+                reference.pop("downloadStatus")
+                plugin_api._save_references(home, [reference])
+                with patch("plugin_api._schedule_reference_download") as schedule_download:
+                    with TestClient(app) as client:
+                        queued = client.post(
+                            f"/api/plugins/video-agent/references/{reference['id']}/download"
+                        )
+
+                self.assertEqual(queued.status_code, 202)
+                self.assertEqual(queued.json()["reference"]["downloadStatus"], "queued")
+                schedule_download.assert_called_once_with(home, reference["id"])
+
+    def test_reference_api_marks_missing_completed_copy_as_downloadable(self) -> None:
+        if not HAS_FASTAPI:
+            self.skipTest("FastAPI/Starlette is unavailable in this Python environment")
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            home = root / "home"
+            home.mkdir()
+            workspace = root / "workspace"
+            for label in ("Waiting", "References", "Finish"):
+                (workspace / label).mkdir(parents=True, exist_ok=True)
+            app = FastAPI()
+            app.include_router(plugin_api.router, prefix="/api/plugins/video-agent")
+            with patch.dict(os.environ, {"HERMES_HOME": str(home), "VIDEO_AGENT_WORKSPACE": str(workspace)}):
+                reference = plugin_api._add_reference(home, "https://youtu.be/abc123", "Previously downloaded")
+                reference["downloadStatus"] = "completed"
+                reference["videoFile"] = f"downloads/{reference['id']}.mp4"
+                plugin_api._save_references(home, [reference])
+                with patch("plugin_api._schedule_reference_download") as schedule_download:
+                    with TestClient(app) as client:
+                        listed = client.get("/api/plugins/video-agent/references")
+                        queued = client.post(f"/api/plugins/video-agent/references/{reference['id']}/download")
+
+                self.assertEqual(listed.status_code, 200)
+                self.assertEqual(listed.json()["references"][0]["downloadStatus"], "not_requested")
+                self.assertEqual(queued.status_code, 202)
+                schedule_download.assert_called_once_with(home, reference["id"])
 
     def test_reference_api_adds_lists_and_removes_validated_links(self) -> None:
         if not HAS_FASTAPI:

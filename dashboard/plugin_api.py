@@ -8,16 +8,18 @@ import math
 import os
 import re
 import secrets
+import shutil
 import stat
 import subprocess
 import tempfile
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from fastapi import APIRouter, HTTPException, Request
@@ -48,6 +50,8 @@ _MAX_RELATIVE_VIDEO_PATH_DEPTH = 16
 _MAX_WAITING_SCAN_DEPTH = 16
 _MAX_WAITING_SCAN_ENTRIES = 20_000
 _REFERENCE_LOCK = threading.Lock()
+_REFERENCE_DOWNLOAD_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="video-agent-reference")
+_MAX_REFERENCE_DOWNLOAD_BYTES = 30 * 1024**3
 _CONTENT_LOCK = threading.Lock()
 _THUMBNAIL_GENERATION_LOCK = threading.BoundedSemaphore(2)
 _MAX_THUMBNAIL_BYTES = 2_000_000
@@ -312,14 +316,32 @@ def _load_references(home: Path) -> list[dict[str, Any]]:
                 or len(added_at) > 64
             ):
                 raise ValueError("invalid reference metadata")
-            references.append({
+            download_status = item.get("downloadStatus", "not_requested")
+            video_file = item.get("videoFile")
+            download_error = item.get("downloadError", "")
+            if (
+                download_status not in {"not_requested", "queued", "downloading", "completed", "failed"}
+                or (video_file is not None and video_file != f"downloads/{reference_id}.mp4")
+                or not isinstance(download_error, str)
+                or len(download_error) > 300
+            ):
+                raise ValueError("invalid reference download state")
+            if video_file is not None and download_status != "completed":
+                raise ValueError("unexpected reference video file")
+            normalized = {
                 "id": reference_id,
                 "platform": validated_url["platform"],
                 "url": validated_url["url"],
                 "note": note,
                 "addedAt": added_at,
                 "observationChecklist": observation_checklist,
-            })
+                "downloadStatus": download_status,
+            }
+            if video_file is not None:
+                normalized["videoFile"] = video_file
+            if download_error:
+                normalized["downloadError"] = download_error
+            references.append(normalized)
         return references
     except (OSError, UnicodeError, ValueError, TypeError) as exc:
         raise OSError("reference store could not be read") from exc
@@ -368,6 +390,7 @@ def _add_reference(home: Path, raw_url: Any, raw_note: Any = "") -> dict[str, An
             "note": note,
             "addedAt": datetime.now(timezone.utc).isoformat(),
             "observationChecklist": _reference_observation_checklist(),
+            "downloadStatus": "queued",
         }
         references.append(reference)
         _save_references(home, references)
@@ -384,11 +407,172 @@ def _delete_reference(home: Path, reference_id: str) -> bool:
 
     with _REFERENCE_LOCK:
         references = _load_references(home)
+        removed = next((item for item in references if item["id"] == reference_id), None)
         remaining = [item for item in references if item["id"] != reference_id]
         if len(remaining) == len(references):
             return False
         _save_references(home, remaining)
+        if removed is not None and removed.get("videoFile") == f"downloads/{reference_id}.mp4":
+            local_video = _resolve_managed_reference_video(reference_id, removed["videoFile"])
+            if local_video is not None:
+                local_video.unlink(missing_ok=True)
         return True
+
+
+def _resolve_managed_reference_video(reference_id: str, video_file: str) -> Path | None:
+    """Resolve only the MP4 copy whose path is deterministically owned by this reference ID."""
+    try:
+        parsed_id = uuid.UUID(reference_id)
+    except (ValueError, TypeError, AttributeError):
+        return None
+    if str(parsed_id) != reference_id or video_file != f"downloads/{reference_id}.mp4":
+        return None
+    workspace = _active_workspace_root()
+    if workspace is None:
+        return None
+    return _resolve_video_in_folder(workspace, "References", video_file)
+
+
+def _reference_video_is_available(reference: dict[str, Any]) -> bool:
+    if reference.get("downloadStatus") != "completed":
+        return False
+    video_file = reference.get("videoFile")
+    if not isinstance(video_file, str):
+        return False
+    local_video = _resolve_managed_reference_video(reference.get("id", ""), video_file)
+    return local_video is not None and local_video.is_file()
+
+
+def _set_reference_download_state(
+    home: Path,
+    reference_id: str,
+    status: str,
+    *,
+    video_file: str | None = None,
+    error: str = "",
+) -> bool:
+    """Persist a bounded download state for a still-existing reference."""
+    with _REFERENCE_LOCK:
+        references = _load_references(home)
+        reference = next((item for item in references if item["id"] == reference_id), None)
+        if reference is None:
+            return False
+        reference["downloadStatus"] = status
+        reference.pop("videoFile", None)
+        reference.pop("downloadError", None)
+        if video_file is not None:
+            reference["videoFile"] = video_file
+        if error:
+            reference["downloadError"] = error[:300]
+        _save_references(home, references)
+        return True
+
+
+def _reference_download_directories(workspace: Path) -> tuple[Path, Path]:
+    """Create confined staging and final directories for plugin-owned reference copies."""
+    references_dir = workspace / "References"
+    if references_dir.is_symlink() or references_dir.resolve(strict=True).parent != workspace:
+        raise OSError("unsafe references directory")
+    staging_root = workspace / ".video-agent-downloads"
+    if staging_root.is_symlink():
+        raise OSError("unsafe reference staging directory")
+    staging_root.mkdir(mode=0o700, exist_ok=True)
+    staging_root = staging_root.resolve(strict=True)
+    if staging_root.parent != workspace or not staging_root.is_dir():
+        raise OSError("unsafe reference staging directory")
+    downloads_root = references_dir / "downloads"
+    if downloads_root.is_symlink():
+        raise OSError("unsafe reference downloads directory")
+    downloads_root.mkdir(mode=0o750, exist_ok=True)
+    downloads_root = downloads_root.resolve(strict=True)
+    if downloads_root.parent != references_dir.resolve(strict=True) or not downloads_root.is_dir():
+        raise OSError("unsafe reference downloads directory")
+    return staging_root, downloads_root
+
+
+def _download_reference_video(home: Path, reference_id: str) -> None:
+    """Download one public allowlisted reference into a plugin-owned MP4 copy."""
+    with _REFERENCE_LOCK:
+        references = _load_references(home)
+        reference = next((item for item in references if item["id"] == reference_id), None)
+    if reference is None:
+        return
+    _set_reference_download_state(home, reference_id, "downloading")
+    staging_directory: Path | None = None
+    final_video: Path | None = None
+    try:
+        workspace = _active_workspace_root()
+        if workspace is None:
+            raise RuntimeError("workspace unavailable")
+        staging_root, downloads_root = _reference_download_directories(workspace)
+        staging_directory = staging_root / reference_id
+        staging_directory.mkdir(mode=0o700, exist_ok=False)
+        import yt_dlp
+
+        options: dict[str, Any] = {
+            "format": "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]",
+            "merge_output_format": "mp4",
+            "outtmpl": str(staging_directory / f"{reference_id}.%(ext)s"),
+            "noplaylist": True,
+            "ignoreconfig": True,
+            "quiet": True,
+            "no_warnings": True,
+            "no_color": True,
+            "cachedir": False,
+            "writedescription": False,
+            "writeinfojson": False,
+            "writethumbnail": False,
+            "writesubtitles": False,
+            "writeautomaticsub": False,
+            "max_filesize": _MAX_REFERENCE_DOWNLOAD_BYTES,
+            "socket_timeout": 30,
+            "retries": 2,
+            "fragment_retries": 2,
+        }
+        with cast(Any, yt_dlp).YoutubeDL(options) as downloader:
+            result = downloader.download([reference["url"]])
+        if result not in (None, 0):
+            raise RuntimeError("download failed")
+        candidates = [path for path in staging_directory.iterdir() if path.suffix.casefold() == ".mp4"]
+        if len(candidates) != 1:
+            raise RuntimeError("no unique MP4 output")
+        downloaded_video = candidates[0]
+        if downloaded_video.is_symlink() or not downloaded_video.is_file():
+            raise RuntimeError("invalid MP4 output")
+        size_bytes = downloaded_video.stat().st_size
+        if size_bytes <= 0 or size_bytes > _MAX_REFERENCE_DOWNLOAD_BYTES:
+            raise RuntimeError("MP4 output exceeds the configured size limit")
+        final_video = downloads_root / f"{reference_id}.mp4"
+        if final_video.exists() or final_video.is_symlink():
+            raise RuntimeError("managed destination already exists")
+        os.replace(downloaded_video, final_video)
+        if not _set_reference_download_state(
+            home,
+            reference_id,
+            "completed",
+            video_file=f"downloads/{reference_id}.mp4",
+        ):
+            final_video.unlink(missing_ok=True)
+    except Exception:
+        try:
+            _set_reference_download_state(
+                home,
+                reference_id,
+                "failed",
+                error="Le téléchargement n’a pas abouti. La vidéo doit être accessible et fournir un MP4.",
+            )
+        except OSError:
+            pass
+        if final_video is not None and final_video.exists():
+            final_video.unlink(missing_ok=True)
+    finally:
+        if staging_directory is not None and staging_directory.exists() and not staging_directory.is_symlink():
+            shutil.rmtree(staging_directory, ignore_errors=True)
+
+
+def _schedule_reference_download(home: Path, reference_id: str) -> None:
+    """Queue a bounded background download without blocking the reference API response."""
+    _REFERENCE_DOWNLOAD_EXECUTOR.submit(_download_reference_video, home, reference_id)
 
 
 def _relative_video_parts(filename: str) -> tuple[str, ...] | None:
@@ -1447,22 +1631,35 @@ def create_custom_skill(payload: dict[str, Any]) -> dict[str, Any]:
 
 @router.get("/references")
 def list_references() -> dict[str, Any]:
-    """Return saved, allowlisted short-form video reference links."""
+    """Return saved references and normalize entries whose managed local copy disappeared."""
+    home = _references_home()
     try:
-        return {"references": _list_references(_references_home())}
+        with _REFERENCE_LOCK:
+            references = _load_references(home)
+            changed = False
+            for reference in references:
+                if reference.get("downloadStatus") == "completed" and not _reference_video_is_available(reference):
+                    reference["downloadStatus"] = "not_requested"
+                    reference.pop("videoFile", None)
+                    reference.pop("downloadError", None)
+                    changed = True
+            if changed:
+                _save_references(home, references)
+        return {"references": references}
     except OSError as exc:
-        raise HTTPException(status_code=500, detail="Impossible de lire les références locales.") from exc
+        raise HTTPException(status_code=500, detail="Impossible de lire les références.") from exc
 
 
 @router.post("/references", status_code=201)
 def create_reference(payload: dict[str, Any]) -> dict[str, Any]:
-    """Save one validated reference link without fetching or downloading it."""
+    """Save one validated link and queue its allowlisted video for a local reference copy."""
     try:
         reference = _add_reference(
             _references_home(),
             payload.get("url"),
             payload.get("note", ""),
         )
+        _schedule_reference_download(_references_home(), reference["id"])
         return {"reference": reference}
     except _ReferenceConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -1470,6 +1667,40 @@ def create_reference(payload: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except OSError as exc:
         raise HTTPException(status_code=500, detail="Impossible d’enregistrer la référence.") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="Le téléchargement de référence ne peut pas démarrer.") from exc
+
+
+@router.post("/references/{reference_id}/download", status_code=202)
+def download_reference(reference_id: str) -> dict[str, Any]:
+    """Queue one saved reference without an available local copy, or retry a failed download."""
+    home = _references_home()
+    try:
+        with _REFERENCE_LOCK:
+            references = _load_references(home)
+            reference = next((item for item in references if item["id"] == reference_id), None)
+            if reference is None:
+                raise HTTPException(status_code=404, detail="Référence introuvable.")
+            if reference.get("downloadStatus") == "completed" and not _reference_video_is_available(reference):
+                reference["downloadStatus"] = "not_requested"
+                reference.pop("videoFile", None)
+            if reference["downloadStatus"] not in {"not_requested", "failed"}:
+                raise HTTPException(status_code=409, detail="Le téléchargement est déjà en cours ou terminé.")
+            reference["downloadStatus"] = "queued"
+            reference.pop("downloadError", None)
+            _save_references(home, references)
+        _schedule_reference_download(home, reference_id)
+        return {"reference": reference}
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="Impossible de mettre à jour le téléchargement.") from exc
+    except RuntimeError as exc:
+        _set_reference_download_state(
+            home,
+            reference_id,
+            "failed",
+            error="Le téléchargement n’a pas pu être lancé.",
+        )
+        raise HTTPException(status_code=503, detail="Le téléchargement ne peut pas démarrer.") from exc
 
 
 @router.delete("/references/{reference_id}")
