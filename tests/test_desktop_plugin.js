@@ -28,7 +28,6 @@ assert.equal(plugin.id, "video-agent");
 assert.equal(plugin.name, "Agent Editor");
 const registrations = [];
 const apiCalls = [];
-const mediaCalls = [];
 const legacyRegistrations = [];
 assert.doesNotThrow(() => plugin.register({
   register: item => legacyRegistrations.push(item),
@@ -49,13 +48,10 @@ const sampleFolders = [
   { id: "references", label: "References", available: true, count: 1, videos: [{ name: "vertical/style.mp4", sizeBytes: 512 }] },
   { id: "finish", label: "Finish", available: true, count: 1, videos: [{ name: "exports/final.mp4", sizeBytes: 256 }] },
 ];
-const sampleTicket = {
-  ticketId: "a".repeat(43),
-  streamUrl: "http://127.0.0.1/api/plugins/video-agent/videos/stream?ticket=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  streamPath: "/videos/stream?ticket=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  mediaUrl: "hermes-media://plugin/opaque-stream",
-  expiresInSeconds: 900,
+const sampleMediaSource = {
+  mediaPath: path.join(path.resolve(__dirname, ".."), "workspace with spaces", "Waiting", "records", "waiting vod #100%.mp4"),
 };
+const sampleMediaUrl = `hermes-media://remote/${encodeURIComponent(sampleMediaSource.mediaPath)}`;
 sandbox.React = {
   useState(initialValue) {
     const componentStates = hookStates.get(currentComponent) || [];
@@ -78,7 +74,7 @@ sandbox.useQuery = options => {
   queryOptions.push(options);
   if (queryKey[1] === "videos") return { data: { folders: sampleFolders }, isLoading: false, refetch() {} };
   if (queryKey[1] === "references") return { data: { references: [] }, isLoading: false, refetch() {} };
-  if (queryKey[1] === "stream") return { data: sampleTicket, isLoading: false, error: null, refetch() {} };
+  if (queryKey[1] === "media-source") return { data: { mediaUrl: sampleMediaUrl }, isLoading: false, error: null, refetch() {} };
   return contentQueryState;
 };
 sandbox.useMutation = options => ({
@@ -97,13 +93,7 @@ plugin.register({
   register: (item) => registrations.push(item),
   rest: (url, options) => {
     apiCalls.push({ url, options });
-    return Promise.resolve(url === "/video-tickets" ? sampleTicket : { moment: {}, reference: {} });
-  },
-  media: {
-    resolveUrl(path) {
-      mediaCalls.push(path);
-      return Promise.resolve(sampleTicket.mediaUrl);
-    },
+    return Promise.resolve(url === "/video-media-source" ? sampleMediaSource : { moment: {}, reference: {} });
   },
   os: { openExternal() {} },
 });
@@ -161,7 +151,7 @@ contentQueryState = { data: { moments: [{ id: "moment-1", timeSeconds: 62.5, not
 page = renderPage();
 const initialPlayer = findNode(page, node => node.type === "video");
 assert.ok(initialPlayer, "Selected video should open in the embedded player");
-assert.equal(initialPlayer.props.src, sampleTicket.mediaUrl);
+assert.equal(initialPlayer.props.src, sampleMediaUrl);
 assert.equal(initialPlayer.props.controls, true);
 initialPlayer.props.onTimeUpdate({ currentTarget: { currentTime: 123.4 } });
 page = renderPage();
@@ -192,6 +182,12 @@ assert.deepEqual(JSON.parse(JSON.stringify(apiCalls[0])), {
   url: "/content/records%2Fwaiting-vod.mp4/moments",
   options: { method: "POST", body: { timeSeconds: 62.5, note: "Bonne réaction", targetFormat: "both" } },
 });
+const retryButton = findNode(page, node => node.type === "button" && collectText(node).includes("Réessayer le flux"));
+const playerBeforeRetry = findNode(page, node => node.type === "video");
+retryButton.props.onClick();
+page = renderPage();
+const playerAfterRetry = findNode(page, node => node.type === "video");
+assert.notEqual(playerAfterRetry.props.key, playerBeforeRetry.props.key, "Retry should reload the same native media URL");
 
 const finishTab = findNode(page, node => node.type === "button" && collectText(node).includes("Terminées"));
 assert.ok(finishTab, "Finish tab should render");
@@ -227,25 +223,25 @@ assert.equal(moduleStub.exports.parseTimecode("00:00:00.1234"), null);
 assert.equal(moduleStub.exports.formatTimecode(3723.5), "01:02:03.500");
 
 (async () => {
-  const queryCountBeforeLegacyRender = queryOptions.length;
   const legacyPageRegistration = legacyRegistrations.find(item => item.area === "routes");
-  render(legacyPageRegistration.render());
-  const legacyStreamQuery = queryOptions.slice(queryCountBeforeLegacyRender).find(options => options.queryKey[1] === "stream");
-  assert.ok(legacyStreamQuery, "A legacy Desktop should load the Agent Editor route and request its ticket");
-  await assert.rejects(legacyStreamQuery.queryFn(), /Mets Hermes Desktop à jour pour lire les vidéos avec le flux authentifié/);
+  const legacyQueryCount = queryOptions.length;
+  const legacyPage = render(legacyPageRegistration.render());
+  const legacyPlayer = findNode(legacyPage, node => node.type === "video");
+  assert.ok(legacyPlayer, "A Desktop without ctx.media should still render the native-protocol player");
+  assert.equal(legacyPlayer.props.src, sampleMediaUrl);
+  assert.ok(queryOptions.slice(legacyQueryCount).some(options => options.queryKey[1] === "media-source"));
 
-  const streamQuery = queryOptions.find(options => options.queryKey[1] === "stream" && options.queryKey[2] === "waiting");
-  assert.ok(streamQuery, "A one-video streaming ticket should be requested for the selected Waiting video");
-  assert.equal(streamQuery.queryKey[3], "records/waiting-vod.mp4");
-  const ticket = await streamQuery.queryFn();
-  assert.equal(ticket.ticketId, sampleTicket.ticketId);
-  assert.equal(ticket.mediaUrl, sampleTicket.mediaUrl);
-  assert.equal("streamUrl" in ticket, false);
-  assert.deepEqual(mediaCalls, [sampleTicket.streamPath]);
+  const sourceQuery = queryOptions.find(options => options.queryKey[1] === "media-source" && options.queryKey[2] === "waiting");
+  assert.ok(sourceQuery, "The selected Waiting video should request a validated media source");
+  assert.equal(sourceQuery.queryKey[3], "records/waiting-vod.mp4");
+  const mediaSource = await sourceQuery.queryFn();
+  assert.equal(mediaSource.mediaUrl, sampleMediaUrl);
   assert.deepEqual(JSON.parse(JSON.stringify(apiCalls[2])), {
-    url: "/video-tickets",
+    url: "/video-media-source",
     options: { method: "POST", body: { folderId: "waiting", filename: "records/waiting-vod.mp4" } },
   });
+  sampleMediaSource.mediaPath = "https://attacker.invalid/video.mp4";
+  await assert.rejects(sourceQuery.queryFn(), /Le chemin du média est invalide\./);
   console.log("Desktop plugin contract, player, and timecode tests passed");
 })().catch(error => {
   console.error(error);

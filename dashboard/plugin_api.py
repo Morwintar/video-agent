@@ -1151,6 +1151,29 @@ def create_video_ticket(payload: dict[str, Any], request: Request, response: Res
     }
 
 
+@router.post("/video-media-source")
+def get_video_media_source(payload: dict[str, Any], response: Response) -> dict[str, str]:
+    """Resolve an allowlisted MP4 path for Hermes Desktop's authenticated media protocol."""
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    folder_id = payload.get("folderId")
+    folder_label = dict(FOLDERS).get(folder_id) if isinstance(folder_id, str) else None
+    filename = payload.get("filename")
+    if folder_label is None:
+        raise HTTPException(status_code=422, detail="Invalid video folder")
+    if not isinstance(filename, str):
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    media_root = _media_root()
+    media_path = _resolve_video_in_folder(media_root, folder_label, filename)
+    if media_path is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+    if folder_id == "waiting":
+        media_path = _resolve_hvc1_compat_video(media_root, filename) or media_path
+    return {"mediaPath": str(media_path)}
+
+
 @router.post("/video-tickets/renew")
 def renew_video_ticket(payload: dict[str, Any]) -> dict[str, int]:
     """Extend a ticket only while its original, unchanged video is still allowlisted."""

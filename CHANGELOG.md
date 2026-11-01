@@ -3,6 +3,13 @@
 Les changements notables du projet sont consignés ici. Les versions suivent
 [SemVer](https://semver.org/).
 
+## [0.4.2] - 2026-11-01
+
+### Fixed
+- Agent Editor lit maintenant les MP4 par le protocole natif `hermes-media://remote` : le Desktop authentifie `/api/files/stream` et transmet Range/seek, sans ticket dans l’URL ni jeton de session exposé au plugin.
+- Le backend du plugin ne retourne au lecteur qu’un chemin absolu MP4 déjà validé dans `Waiting`, `References` ou `Finish`; le chemin est encodé et contrôlé avant de construire l’URL native.
+- La lecture fonctionne sans l’API expérimentale `ctx.media.resolveUrl`; aucun changement au cœur du Desktop ou du Gateway n’est requis.
+
 ## [0.4.1] - 2026-11-01
 
 ### Fixed

@@ -40,6 +40,17 @@ function errorText(error, fallback) {
   return error instanceof Error && error.message ? error.message : fallback
 }
 
+function buildHermesRemoteMediaUrl(mediaPath) {
+  if (typeof mediaPath !== 'string' || mediaPath.length > 8192 || /[\u0000-\u001f\u007f]/.test(mediaPath)) {
+    throw new Error('Le chemin du média est invalide.')
+  }
+  const isAbsolutePath = mediaPath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(mediaPath) || /^\\\\[^\\]+\\[^\\]+/.test(mediaPath)
+  if (!isAbsolutePath || !/\.mp4$/i.test(mediaPath)) {
+    throw new Error('Le chemin du média est invalide.')
+  }
+  return `hermes-media://remote/${encodeURIComponent(mediaPath)}`
+}
+
 function formatBytes(value) {
   if (!Number.isFinite(value) || value < 0) return ''
   if (value < 1024) return `${value} B`
@@ -103,97 +114,57 @@ function VideoList({ videos, selectedName, onSelect, search }) {
   })
 }
 
-function PlaybackPanel({ rest, media, scheduleInterval, folderId, video, onTimeUpdate, seekTime }) {
+function PlaybackPanel({ rest, folderId, video, onTimeUpdate, seekTime }) {
   const [renewalError, setRenewalError] = React.useState('')
+  const [retryGeneration, setRetryGeneration] = React.useState(0)
   const playerRef = React.useRef(null)
   const restoreTimeRef = React.useRef(0)
-  const ticketQuery = useQuery({
-    queryKey: [...QUERY_ROOT, 'stream', folderId, video.name],
+  const mediaQuery = useQuery({
+    queryKey: [...QUERY_ROOT, 'media-source', folderId, video.name],
     queryFn: async () => {
-      if (!media?.resolveUrl) throw new Error('Mets Hermes Desktop à jour pour lire les vidéos avec le flux authentifié.')
-      const created = await rest('/video-tickets', {
+      const source = await rest('/video-media-source', {
         method: 'POST',
         body: { folderId, filename: video.name },
       })
-      try {
-        const mediaUrl = await media.resolveUrl(created.streamPath)
-        return {
-          ticketId: created.ticketId,
-          expiresInSeconds: created.expiresInSeconds,
-          mediaUrl,
-        }
-      } catch (error) {
-        await rest('/video-tickets/revoke', { method: 'POST', body: { ticketId: created.ticketId } }).catch(() => {})
-        throw error
-      }
+      return { mediaUrl: buildHermesRemoteMediaUrl(source?.mediaPath) }
     },
     enabled: Boolean(video),
     staleTime: 0,
     retry: false,
   })
-  const ticket = ticketQuery.data
-  const lifecycleRef = React.useRef(0)
-  const currentTicketRef = React.useRef(ticket?.ticketId)
-  currentTicketRef.current = ticket?.ticketId
-
-  React.useEffect(() => {
-    if (!ticket?.ticketId) return undefined
-    lifecycleRef.current += 1
-    const effectGeneration = lifecycleRef.current
-    let active = true
-    const disposeInterval = scheduleInterval(async () => {
-      try {
-        await rest('/video-tickets/renew', { method: 'POST', body: { ticketId: ticket.ticketId } })
-        if (active) setRenewalError('')
-      } catch (_error) {
-        if (active) {
-          setRenewalError('La session de lecture doit être renouvelée.')
-          restoreTimeRef.current = Number(playerRef.current?.currentTime) || 0
-          ticketQuery.refetch()
-        }
-      }
-    }, Math.max(60_000, Math.floor((ticket.expiresInSeconds || 900) * 600)))
-    return () => {
-      active = false
-      disposeInterval()
-      Promise.resolve().then(() => {
-        if (currentTicketRef.current !== ticket.ticketId || lifecycleRef.current === effectGeneration) {
-          rest('/video-tickets/revoke', { method: 'POST', body: { ticketId: ticket.ticketId } }).catch(() => {})
-        }
-      }).catch(() => {})
-    }
-  }, [rest, scheduleInterval, ticket?.ticketId, ticket?.expiresInSeconds])
+  const mediaSource = mediaQuery.data
 
   React.useEffect(() => {
     const player = playerRef.current
     if (player && typeof seekTime === 'number' && player.readyState >= 1) player.currentTime = seekTime
-  }, [seekTime, ticket?.ticketId])
+  }, [seekTime, mediaSource?.mediaUrl])
 
   function retryStream() {
     restoreTimeRef.current = Number(playerRef.current?.currentTime) || 0
     setRenewalError('')
-    ticketQuery.refetch()
+    setRetryGeneration(value => value + 1)
+    mediaQuery.refetch()
   }
 
-  if (!ticket && ticketQuery.isLoading) {
+  if (!mediaSource && mediaQuery.isLoading) {
     return jsx('div', { className: 'flex aspect-video items-center justify-center rounded-md border border-(--ui-stroke-secondary) text-sm text-(--ui-text-tertiary)', role: 'status', children: 'Préparation du flux vidéo…' })
   }
-  if (!ticket && ticketQuery.error) {
+  if (!mediaSource && mediaQuery.error) {
     return jsxs('div', {
       className: 'flex aspect-video flex-col items-center justify-center gap-3 rounded-md border border-(--ui-stroke-secondary) p-4 text-sm text-(--ui-text-secondary)',
       role: 'alert',
-      children: [jsx('span', { children: errorText(ticketQuery.error, 'Le flux vidéo n’a pas pu être préparé.') }), jsx(Button, { type: 'button', onClick: () => ticketQuery.refetch(), children: 'Réessayer' })],
+      children: [jsx('span', { children: errorText(mediaQuery.error, 'Le flux vidéo n’a pas pu être préparé.') }), jsx(Button, { type: 'button', onClick: () => mediaQuery.refetch(), children: 'Réessayer' })],
     })
   }
 
   return jsxs('div', {
     className: 'flex flex-col gap-2',
     children: [
-      ticket?.mediaUrl ? jsx('video', {
-        key: ticket.ticketId,
+      mediaSource?.mediaUrl ? jsx('video', {
+        key: `${mediaSource.mediaUrl}:${retryGeneration}`,
         ref: playerRef,
         className: 'aspect-video w-full rounded-md border border-(--ui-stroke-secondary) bg-black/80 object-contain',
-        src: ticket.mediaUrl,
+        src: mediaSource.mediaUrl,
         controls: true,
         preload: 'metadata',
         playsInline: true,
@@ -211,13 +182,13 @@ function PlaybackPanel({ rest, media, scheduleInterval, folderId, video, onTimeU
       }) : jsx('div', { className: 'flex aspect-video items-center justify-center rounded-md border border-(--ui-stroke-secondary) text-sm text-(--ui-text-tertiary)', role: 'status', children: 'Le flux vidéo est indisponible.' }),
       jsxs('div', {
         className: 'flex flex-wrap items-center justify-between gap-2 text-xs text-(--ui-text-tertiary)',
-        children: [jsx('span', { children: renewalError || 'Lecture progressive · session limitée à cette vidéo' }), jsx(Button, { type: 'button', onClick: retryStream, children: 'Renouveler le flux' })],
+        children: [jsx('span', { children: renewalError || 'Lecture progressive · authentification Hermes Desktop' }), jsx(Button, { type: 'button', onClick: retryStream, children: 'Réessayer le flux' })],
       }),
     ],
   })
 }
 
-function MomentWorkspace({ rest, media, scheduleInterval, video, contentQuery, currentFolderId }) {
+function MomentWorkspace({ rest, video, contentQuery, currentFolderId }) {
   const queryClient = useQueryClient()
   const [timecode, setTimecode] = React.useState('')
   const [note, setNote] = React.useState('')
@@ -254,7 +225,7 @@ function MomentWorkspace({ rest, media, scheduleInterval, video, contentQuery, c
   return jsxs('div', {
     className: 'flex min-h-0 flex-col gap-4',
     children: [
-      jsx(PlaybackPanel, { rest, media, scheduleInterval, folderId: currentFolderId, video, onTimeUpdate: setCurrentTime, seekTime }),
+      jsx(PlaybackPanel, { rest, folderId: currentFolderId, video, onTimeUpdate: setCurrentTime, seekTime }),
       jsxs('form', {
         className: 'grid grid-cols-1 gap-3 md:grid-cols-[10rem_minmax(0,1fr)_9rem_auto]',
         onSubmit: submitMoment,
@@ -289,7 +260,7 @@ function MomentWorkspace({ rest, media, scheduleInterval, video, contentQuery, c
   })
 }
 
-function ReferenceLibrary({ rest, media, scheduleInterval, openExternal, localVideos, selectedVideo, referencesQuery }) {
+function ReferenceLibrary({ rest, openExternal, localVideos, selectedVideo, referencesQuery }) {
   const queryClient = useQueryClient()
   const [url, setUrl] = React.useState('')
   const [note, setNote] = React.useState('')
@@ -347,14 +318,14 @@ function ReferenceLibrary({ rest, media, scheduleInterval, openExternal, localVi
         title: `Vidéo de référence · ${localVideos.length}`,
         description: selectedVideo?.name || 'Sélectionne un MP4 dans la bibliothèque pour le lire.',
         children: selectedVideo
-          ? jsx(PlaybackPanel, { rest, media, scheduleInterval, folderId: 'references', video: selectedVideo })
+          ? jsx(PlaybackPanel, { rest, folderId: 'references', video: selectedVideo })
           : jsx('p', { className: 'py-4 text-sm text-(--ui-text-tertiary)', children: 'Aucune vidéo MP4 locale à lire.' }),
       }),
     ],
   })
 }
 
-function AgentEditorPage({ rest, media, scheduleInterval, openExternal }) {
+function AgentEditorPage({ rest, openExternal }) {
   const [activeFolder, setActiveFolder] = React.useState('waiting')
   const [selectedName, setSelectedName] = React.useState('')
   const [search, setSearch] = React.useState('')
@@ -421,15 +392,15 @@ function AgentEditorPage({ rest, media, scheduleInterval, openExternal }) {
             children: [jsx('input', { className: fieldClass(), type: 'search', value: search, onChange: event => setSearch(event.target.value), placeholder: 'Filtrer les vidéos…', 'aria-label': 'Filtrer les vidéos' }), jsx(VideoList, { videos, selectedName: selectedVideo?.name || '', onSelect: setSelectedName, search })],
           }),
           activeFolder === 'references'
-            ? jsx('div', { className: 'min-h-0 xl:col-span-2', children: jsx(ReferenceLibrary, { rest, media, scheduleInterval, openExternal, localVideos: localReferenceVideos, selectedVideo, referencesQuery }) })
+            ? jsx('div', { className: 'min-h-0 xl:col-span-2', children: jsx(ReferenceLibrary, { rest, openExternal, localVideos: localReferenceVideos, selectedVideo, referencesQuery }) })
             : activeFolder === 'waiting' && selectedVideo
-              ? jsx(Panel, { title: selectedVideo.name, description: 'Workspace Waiting · lecture progressive', className: 'min-h-[16rem] xl:col-span-2', children: jsx(MomentWorkspace, { rest, media, scheduleInterval, video: selectedVideo, contentQuery, currentFolderId: activeFolder }) })
+              ? jsx(Panel, { title: selectedVideo.name, description: 'Workspace Waiting · lecture progressive', className: 'min-h-[16rem] xl:col-span-2', children: jsx(MomentWorkspace, { rest, video: selectedVideo, contentQuery, currentFolderId: activeFolder }) })
               : jsx(Panel, {
                 title: selectedVideo ? selectedVideo.name : 'Aucune vidéo sélectionnée',
                 description: 'Workspace Finish · lecture seule',
                 className: 'min-h-[16rem] xl:col-span-2',
                 children: selectedVideo
-                  ? jsx(PlaybackPanel, { rest, media, scheduleInterval, folderId: activeFolder, video: selectedVideo })
+                  ? jsx(PlaybackPanel, { rest, folderId: activeFolder, video: selectedVideo })
                   : jsx('p', { className: 'py-4 text-sm text-(--ui-text-tertiary)', children: 'Ajoute des vidéos MP4 dans Finish pour les retrouver ici.' }),
               }),
         ],
@@ -443,14 +414,12 @@ export default {
   name: 'Agent Editor',
   register(ctx) {
     const rest = (path, options) => ctx.rest(path, options)
-    const media = ctx.media?.resolveUrl ? { resolveUrl: path => ctx.media.resolveUrl(path) } : undefined
     const openExternal = url => ctx.os.openExternal(url)
-    const scheduleInterval = (callback, milliseconds) => ctx.setInterval(callback, milliseconds)
     ctx.register({
       id: 'agent-editor-page',
       area: ROUTES_AREA,
       data: { path: '/agent-editor' },
-      render: () => jsx(AgentEditorPage, { rest, media, scheduleInterval, openExternal }),
+      render: () => jsx(AgentEditorPage, { rest, openExternal }),
     })
     ctx.register({
       id: 'agent-editor-sidebar',

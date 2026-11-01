@@ -88,6 +88,60 @@ class VideoTicketRouteTests(unittest.TestCase):
         self.assertEqual(invalid_folder.status_code, 422)
         self.assertEqual(traversal.status_code, 404)
 
+    def test_media_source_returns_only_the_validated_absolute_mp4_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            waiting = root / "Waiting" / "records"
+            waiting.mkdir(parents=True)
+            source = waiting / "vod #100%.mp4"
+            source.write_bytes(b"sample")
+            (root / "References").mkdir()
+            (root / "Finish").mkdir()
+            app = self.make_app()
+            with patch("plugin_api._media_root", return_value=root):
+                with TestClient(app) as client:
+                    response = client.post("/api/plugins/video-agent/video-media-source", json={
+                        "folderId": "waiting",
+                        "filename": "records/vod #100%.mp4",
+                    })
+                    traversal = client.post("/api/plugins/video-agent/video-media-source", json={
+                        "folderId": "waiting",
+                        "filename": "../outside.mp4",
+                    })
+                    wrong_extension = client.post("/api/plugins/video-agent/video-media-source", json={
+                        "folderId": "waiting",
+                        "filename": "records/vod.txt",
+                    })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"mediaPath": str(source)})
+        self.assertEqual(response.headers["cache-control"], "private, no-store")
+        self.assertEqual(response.headers["referrer-policy"], "no-referrer")
+        self.assertEqual(traversal.status_code, 404)
+        self.assertEqual(wrong_extension.status_code, 404)
+
+    def test_media_source_prefers_the_existing_validated_waiting_compat_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "workspace"
+            source = root / "Waiting" / "records" / "vod.mp4"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"source")
+            state = Path(temp_dir) / "state" / "waiting-studio"
+            compatibility = state / "compat" / "records" / "vod.mp4"
+            compatibility.parent.mkdir(parents=True)
+            compatibility.write_bytes(b"hvc1-copy")
+            app = self.make_app()
+            with patch("plugin_api._media_root", return_value=root):
+                with patch("plugin_api._state_directory", return_value=state):
+                    with TestClient(app) as client:
+                        response = client.post("/api/plugins/video-agent/video-media-source", json={
+                            "folderId": "waiting",
+                            "filename": "records/vod.mp4",
+                        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"mediaPath": str(compatibility)})
+
     def test_ticket_is_revoked_and_cannot_be_renewed_or_used_afterward(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
