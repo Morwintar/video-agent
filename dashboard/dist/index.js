@@ -83,6 +83,60 @@
     return `${url.pathname}${url.search}`;
   }
 
+  function VideoThumbnail(props) {
+    const [visible, setVisible] = useState(false);
+    const [imageUrl, setImageUrl] = useState("");
+    const [failed, setFailed] = useState(false);
+    const thumbnailRef = useRef(null);
+
+    useEffect(() => {
+      const element = thumbnailRef.current;
+      if (!element) return undefined;
+      if (typeof window.IntersectionObserver !== "function") {
+        setVisible(true);
+        return undefined;
+      }
+      const observer = new window.IntersectionObserver((entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setVisible(true);
+          observer.disconnect();
+        }
+      }, { rootMargin: "160px" });
+      observer.observe(element);
+      return () => observer.disconnect();
+    }, []);
+
+    useEffect(() => {
+      if (!visible) return undefined;
+      const controller = new AbortController();
+      let objectUrl = "";
+      async function loadThumbnail() {
+        try {
+          const url = `${API_URL}/waiting-thumbnails/${encodeURIComponent(props.video.name)}`;
+          const response = await SDK.authedFetch(url, { signal: controller.signal });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const imageBlob = await response.blob();
+          if (controller.signal.aborted) return;
+          objectUrl = URL.createObjectURL(imageBlob);
+          setImageUrl(objectUrl);
+        } catch (_error) {
+          if (!controller.signal.aborted) setFailed(true);
+        }
+      }
+      loadThumbnail();
+      return () => {
+        controller.abort();
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+      };
+    }, [visible, props.video.name]);
+
+    return h("div", { className: "wvs__thumbnail", ref: thumbnailRef, "aria-hidden": "true" },
+      imageUrl
+        ? h("img", { src: imageUrl, alt: "", loading: "lazy" })
+        : h("span", { className: "wvs__thumbnail-placeholder" }, failed ? "Aperçu indisponible" : "Aperçu vidéo"),
+    );
+  }
+
   function VideoSection(props) {
     const folder = props.folder;
     const videos = Array.isArray(folder.videos) ? folder.videos : [];
@@ -111,7 +165,8 @@
         videos.map((video) =>
           h(
             "li",
-            { className: "wvs__item", key: `${folder.id}:${video.name}` },
+            { className: `wvs__item${folder.id === "waiting" ? " wvs__item--waiting" : ""}`, key: `${folder.id}:${video.name}` },
+            folder.id === "waiting" ? h(VideoThumbnail, { video, key: `thumbnail:${video.name}` }) : null,
             h("span", { className: "wvs__file-mark", "aria-hidden": "true" }, "MP4"),
             h(
               "span",
@@ -167,6 +222,47 @@
         h("span", { className: "wvs__count" }, pluralizeVideo(count)),
       ),
       h("div", { className: "wvs__panel-content" }, content),
+    );
+  }
+
+  function FinishedClipsSection(props) {
+    const clips = Array.isArray(props.clips) ? props.clips : [];
+    return h(
+      "section",
+      { className: "wvs__panel wvs__finished-clips", "aria-labelledby": "wvs-finished-clips-title" },
+      h(
+        "header",
+        { className: "wvs__panel-header" },
+        h("div", null,
+          h("h2", { className: "wvs__panel-title", id: "wvs-finished-clips-title" }, "Clips créés"),
+          h("p", { className: "wvs__panel-subtitle" }, "MP4 de Finish associés par le nom de cette rediffusion; les repères restent des notes, pas des vidéos."),
+        ),
+        h("span", { className: "wvs__count" }, `${clips.length} clip${clips.length === 1 ? "" : "s"}`),
+      ),
+      props.loading
+        ? h("p", { className: "wvs__status", role: "status" }, "Recherche des clips créés pour cette rediffusion…")
+        : props.error
+          ? h("p", { className: "wvs__status", role: "status" }, "La liste des clips n’a pas pu être chargée; réessaie l’actualisation.")
+          : clips.length
+            ? h("ul", { className: "wvs__clip-list", "aria-label": "Clips créés dans Finish" }, clips.map((clip) =>
+                h("li", { className: "wvs__clip-item", key: clip.name },
+                  h("span", { className: "wvs__file-mark", "aria-hidden": "true" }, "MP4"),
+                  h("span", { className: "wvs__file-details" },
+                    h("span", { className: "wvs__filename", title: clip.name }, clip.name),
+                    h("span", { className: "wvs__filesize" }, formatBytes(clip.sizeBytes)),
+                  ),
+                  h("button", {
+                    className: "wvs__clip-play",
+                    type: "button",
+                    onClick: () => props.onPlay(clip),
+                    "aria-label": `Prévisualiser le clip ${clip.name}`,
+                  }, "Prévisualiser"),
+                ),
+              ))
+            : h("p", { className: "wvs__empty" }, "Aucun clip rendu associé à cette rediffusion. Les repères enregistrés ne sont pas des fichiers vidéo."),
+      props.clipsTruncated
+        ? h("p", { className: "wvs__clip-warning", role: "status" }, "La liste Finish est volumineuse; les clips associés affichés peuvent être incomplets. Actualise l’inventaire et vérifie le dossier Finish au besoin.")
+        : null,
     );
   }
 
@@ -633,7 +729,7 @@
   }
 
   function ContentWorkspace(props) {
-    const [workspace, setWorkspace] = useState({ loading: true, error: "", items: [], moments: [], references: [], observationChecklist: [] });
+    const [workspace, setWorkspace] = useState({ loading: true, error: "", items: [], moments: [], clips: [], clipsTruncated: false, references: [], observationChecklist: [] });
     const [draft, setDraft] = useState({ format: "short", title: "", concept: "", hook: "", script: "", notes: "" });
     const [saving, setSaving] = useState(false);
     const [notice, setNotice] = useState(null);
@@ -668,6 +764,8 @@
           error: "",
           items: response.items,
           moments: Array.isArray(response.moments) ? response.moments : [],
+          clips: Array.isArray(response.clips) ? response.clips : [],
+          clipsTruncated: response.clipsTruncated === true,
           references: response.references,
           observationChecklist: Array.isArray(response.observationChecklist) ? response.observationChecklist : [],
         });
@@ -780,6 +878,7 @@
     const checklist = Array.isArray(workspace.observationChecklist) ? workspace.observationChecklist : [];
     const items = Array.isArray(workspace.items) ? workspace.items : [];
     const moments = Array.isArray(workspace.moments) ? workspace.moments : [];
+    const clips = Array.isArray(workspace.clips) ? workspace.clips : [];
     const observationList = (entries, prefix) => h("ul", { className: "wvs__observation-list" },
       entries.map((entry) => h("li", { key: `${prefix}-${entry.id}` }, entry.label)),
     );
@@ -797,6 +896,13 @@
           h("p", { className: "wvs__panel-subtitle" }, "Brouillons liés à cette rediffusion. La vidéo source reste intacte."),
         ),
       ),
+      h(FinishedClipsSection, {
+        clips,
+        clipsTruncated: workspace.clipsTruncated === true,
+        loading: workspace.loading,
+        error: workspace.error,
+        onPlay: props.onPlayClip,
+      }),
       h("section", { className: "wvs__panel wvs__moment-workspace", "aria-labelledby": "wvs-moment-title" },
         h("div", { className: "wvs__panel-header" },
           h("div", null,
@@ -1032,11 +1138,15 @@
     }, [refresh, loadSkills]);
 
     if (selectedContentSource) {
-      return h(ContentWorkspace, {
-        key: selectedContentSource.name,
-        video: selectedContentSource,
-        onBack: () => setSelectedContentSource(null),
-      });
+      return h("div", { className: "wvs__workspace-shell" },
+        h(ContentWorkspace, {
+          key: selectedContentSource.name,
+          video: selectedContentSource,
+          onBack: () => setSelectedContentSource(null),
+          onPlayClip: setSelectedVideo,
+        }),
+        h(VideoPlayer, { video: selectedVideo, onClose: closePlayer }),
+      );
     }
 
     const folders = snapshot && Array.isArray(snapshot.folders) ? snapshot.folders : [];
@@ -1044,6 +1154,9 @@
       { id: "waiting", label: "Waiting", available: true, count: 0, videos: [] },
       { id: "finish", label: "Finish", available: true, count: 0, videos: [] },
     ];
+    const activeFolders = folders.length ? folders : fallbackFolders;
+    const waitingFolder = activeFolders.find((folder) => folder.id === "waiting") || fallbackFolders[0];
+    const finishFolder = activeFolders.find((folder) => folder.id === "finish") || (!snapshot ? fallbackFolders[1] : null);
 
     return h(
       "div",
@@ -1054,9 +1167,9 @@
         h(
           "div",
           { className: "wvs__heading" },
-          h("p", { className: "wvs__eyebrow" }, "INVENTAIRE LOCAL"),
-          h("h1", { className: "wvs__title" }, "Montage vidéo"),
-          h("p", { className: "wvs__intro" }, "Les MP4 de Waiting et Finish restent intacts. Cliquez sur une rediffusion Waiting pour créer et retrouver ses brouillons; les vidéos Finish sont en prévisualisation seulement."),
+          h("p", { className: "wvs__eyebrow" }, "BIBLIOTHÈQUE WAITING"),
+          h("h1", { className: "wvs__title" }, "Mes rediffusions"),
+          h("p", { className: "wvs__intro" }, "Choisis une vidéo de Waiting pour retrouver ses repères, ses brouillons et les clips créés dans Finish. Les fichiers source restent intacts."),
         ),
         h("button", { className: "wvs__refresh", type: "button", onClick: refresh, disabled: loading, "aria-busy": loading }, loading ? "Actualisation…" : "Actualiser"),
       ),
@@ -1069,11 +1182,15 @@
       ),
       h(
         "div",
-        { className: "wvs__grid" },
-        (folders.length ? folders : fallbackFolders).map((folder) =>
-          h(VideoSection, { folder, key: folder.id, loading, hasSnapshot: Boolean(snapshot), error, onPlay: setSelectedVideo, onOpenContent: setSelectedContentSource }),
-        ),
+        { className: "wvs__grid wvs__grid--primary" },
+        h(VideoSection, { folder: waitingFolder, loading, hasSnapshot: Boolean(snapshot), error, onPlay: setSelectedVideo, onOpenContent: setSelectedContentSource }),
       ),
+      finishFolder
+        ? h("details", { className: "wvs__finish-library" },
+            h("summary", null, `Parcourir les autres vidéos dans Finish · ${finishFolder.count}`),
+            h(VideoSection, { folder: finishFolder, loading, hasSnapshot: Boolean(snapshot), error, onPlay: setSelectedVideo, onOpenContent: setSelectedContentSource }),
+          )
+        : null,
       h(SkillSection, { skills, skillsLoading, skillsError, onCreate: createSkill }),
       h(VideoPlayer, { video: selectedVideo, onClose: closePlayer }),
       h(ReferenceSection, null),

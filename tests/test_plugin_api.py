@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import types
@@ -44,11 +45,18 @@ except ModuleNotFoundError:
             if filename:
                 self.headers["content-disposition"] = f'{content_disposition_type}; filename="{filename}"'
 
+    class _TestResponse:
+        def __init__(self, content, *, media_type=None, headers=None, **_kwargs):
+            self.body = content
+            self.media_type = media_type
+            self.headers = headers or {}
+
     fastapi_stub = types.ModuleType("fastapi")
     fastapi_stub.APIRouter = _TestRouter
     fastapi_stub.HTTPException = _TestHTTPException
     responses_stub = types.ModuleType("fastapi.responses")
     responses_stub.FileResponse = _TestFileResponse
+    setattr(responses_stub, "Response", _TestResponse)
     fastapi_stub.responses = responses_stub
     sys.modules["fastapi"] = fastapi_stub
     sys.modules["fastapi.responses"] = responses_stub
@@ -387,6 +395,36 @@ class NewFeatureTests(unittest.TestCase):
         self.assertEqual(draft.status_code, 201)
         self.assertEqual(draft.json()["item"]["sourceFilename"], "records/nested-recording.mp4")
 
+    def test_content_workspace_lists_only_finish_clips_for_selected_waiting_video(self) -> None:
+        with tempfile.TemporaryDirectory(dir="/opt/data/cache/scratch") as temp_dir:
+            root = Path(temp_dir)
+            home = root / "home"
+            home.mkdir()
+            waiting = root / "Waiting" / "records"
+            waiting.mkdir(parents=True)
+            finish = root / "Finish"
+            finish.mkdir()
+            (waiting / "vod.mp4").write_bytes(b"source")
+            (finish / "vod_highlight_15s.mp4").write_bytes(b"clip")
+            (finish / "vod.mp4").write_bytes(b"not a clip")
+            (finish / "vodder_highlight.mp4").write_bytes(b"different source")
+            (finish / "other_vod_highlight.mp4").write_bytes(b"different source")
+            nested_finish = finish / "nested"
+            nested_finish.mkdir()
+            (nested_finish / "vod_nested_clip.mp4").write_bytes(b"not direct")
+            outside = root / "outside.mp4"
+            outside.write_bytes(b"linked clip")
+            try:
+                (finish / "vod_linked_clip.mp4").symlink_to(outside)
+            except OSError as exc:
+                self.skipTest(f"Symlinks are unavailable: {exc}")
+
+            workspace = plugin_api._get_content_workspace(root, home, "records/vod.mp4")
+
+        self.assertEqual(workspace["sourceFilename"], "records/vod.mp4")
+        self.assertEqual(workspace["clips"], [{"name": "vod_highlight_15s.mp4", "sizeBytes": 4}])
+        self.assertNotIn("path", workspace["clips"][0])
+
     def test_waiting_video_resolver_accepts_nested_regular_mp4s_but_rejects_symlinks(self) -> None:
         with tempfile.TemporaryDirectory(dir="/opt/data/cache/scratch") as temp_dir:
             root = Path(temp_dir)
@@ -421,6 +459,80 @@ class NewFeatureTests(unittest.TestCase):
             self.assertIsNone(resolver(root, "linked.mp4"))
             self.assertIsNone(resolver(root, "linked-dir/escape.mp4"))
             self.assertIsNone(resolver(root, "notes.txt"))
+
+    def test_waiting_thumbnail_route_returns_jpeg_and_rejects_unsafe_paths(self) -> None:
+        if not HAS_FASTAPI:
+            self.skipTest("FastAPI/Starlette is unavailable in this Python environment")
+        ffmpeg = shutil.which("ffmpeg")
+        if ffmpeg is None:
+            self.skipTest("FFmpeg is unavailable in this Python environment")
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        with tempfile.TemporaryDirectory(dir="/opt/data/cache/scratch") as temp_dir:
+            root = Path(temp_dir)
+            waiting = root / "Waiting" / "records"
+            waiting.mkdir(parents=True)
+            source = waiting / "sample.mp4"
+            subprocess.run(
+                [
+                    ffmpeg,
+                    "-nostdin",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=red:s=64x36:r=1:d=1",
+                    "-an",
+                    "-c:v",
+                    "mpeg4",
+                    "-q:v",
+                    "5",
+                    "-y",
+                    str(source),
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                timeout=20,
+            )
+            outside = root / "outside.mp4"
+            outside.write_bytes(source.read_bytes())
+            broken = waiting / "broken.mp4"
+            broken.write_bytes(b"not a video")
+            try:
+                (waiting / "linked.mp4").symlink_to(outside)
+            except OSError as exc:
+                self.skipTest(f"Symlinks are unavailable: {exc}")
+
+            app = FastAPI()
+            app.include_router(plugin_api.router, prefix="/api/plugins/waiting-studio")
+            with patch("plugin_api._media_root", return_value=root):
+                with TestClient(app) as client:
+                    response = client.get(
+                        "/api/plugins/waiting-studio/videos/waiting-thumbnails/records%2Fsample.mp4"
+                    )
+                    traversal = client.get(
+                        "/api/plugins/waiting-studio/videos/waiting-thumbnails/%2E%2E%2Foutside.mp4"
+                    )
+                    linked = client.get(
+                        "/api/plugins/waiting-studio/videos/waiting-thumbnails/linked.mp4"
+                    )
+                    invalid = client.get(
+                        "/api/plugins/waiting-studio/videos/waiting-thumbnails/records%2Fbroken.mp4"
+                    )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.headers["content-type"].startswith("image/jpeg"))
+        self.assertTrue(response.content.startswith(b"\xff\xd8"))
+        self.assertTrue(response.content.endswith(b"\xff\xd9"))
+        self.assertEqual(response.headers["cache-control"], "private, max-age=3600")
+        self.assertEqual(traversal.status_code, 404)
+        self.assertEqual(linked.status_code, 404)
+        self.assertEqual(invalid.status_code, 503)
+        self.assertNotIn(b"Invalid data", invalid.content)
 
     def test_waiting_video_route_supports_range_playback(self) -> None:
         if not HAS_FASTAPI:

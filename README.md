@@ -1,6 +1,6 @@
 # Waiting Studio — plugin du dashboard Hermes
 
-Waiting Studio affiche les MP4 de `Waiting` (y compris ses sous-dossiers, avec leur chemin relatif) et les MP4 directement présents dans `Finish`. Les vidéos restent en lecture seule; cliquer sur un MP4 de `Waiting` ouvre son espace de contenu pour lire la rediffusion, repérer des moments horodatés, créer et retrouver des brouillons; cliquer sur le nom ou **Lire** dans `Finish` ouvre le lecteur. Les sections **Skills personnalisés** et **Références pour les shorts** permettent d’ajouter des skills locaux et des liens TikTok/YouTube avec notes et points à observer. Chaque nouveau brouillon conserve un instantané des références/consignes utilisées à sa création. Les liens ne sont pas visités ni téléchargés; aucun fichier source n’est modifié et rien n’est publié. Cette tranche enregistre des brouillons éditoriaux — elle ne génère ni ne rend encore de vidéo.
+Waiting Studio met les vidéos de `Waiting` (y compris ses sous-dossiers, avec leur chemin relatif) au premier plan; la liste `Finish` complète reste accessible dans une section repliée. Chaque rediffusion Waiting affiche une miniature produite à la demande par FFmpeg, sans modifier ni enregistrer de dérivé sur disque. Choisir une rediffusion ouvre son espace de contenu pour lire la source, retrouver ses repères et brouillons, et prévisualiser les clips MP4 associés déjà créés dans `Finish`. Les sections **Skills personnalisés** et **Références pour les shorts** permettent d’ajouter des skills locaux et des liens TikTok/YouTube avec notes et points à observer. Chaque nouveau brouillon conserve un instantané des références/consignes utilisées à sa création. Les liens ne sont pas visités ni téléchargés; aucun fichier source n’est modifié et rien n’est publié. Cette tranche enregistre des brouillons éditoriaux — elle ne génère ni ne rend encore de vidéo.
 
 ## Emplacement et source
 
@@ -15,12 +15,13 @@ Les skills créés par l’interface sont enregistrés dans `skills/<nom>/SKILL.
 
 - `GET /api/plugins/waiting-studio/videos` renvoie les noms (chemins relatifs pour les sous-dossiers de `Waiting`), tailles et états de disponibilité des deux dossiers, sans chemin absolu.
 - `GET /api/plugins/waiting-studio/videos/waiting/{filename}` sert uniquement un MP4 régulier directement dans `Waiting` ou dans un de ses sous-dossiers, avec requêtes HTTP Range; `?codec=auto` choisit une copie HVC1 dérivée si elle existe dans `state/waiting-studio/compat/`, sinon la source; `?codec=source` force l’original. Les chemins arbitraires et liens symboliques dans les composants du chemin sont refusés.
+- `GET /api/plugins/waiting-studio/videos/waiting-thumbnails/{filename}` extrait à la demande une image JPEG 320×180 max depuis une vidéo régulière de `Waiting`; la génération est limitée en temps et en concurrence, le cache reste borné en mémoire et les erreurs n’exposent pas les diagnostics FFmpeg. Aucun dérivé n’est écrit sur disque; FFmpeg doit être dans le `PATH`.
 - `GET /api/plugins/waiting-studio/videos/finish/{filename}` sert uniquement un MP4 régulier directement dans `Finish`, avec les requêtes HTTP Range nécessaires au seek; les chemins arbitraires et les liens symboliques sont refusés.
 - `GET /api/plugins/waiting-studio/skills` liste les skills locaux sans exposer de chemins.
 - `POST /api/plugins/waiting-studio/skills` crée un nouveau skill validé, sans écraser un skill existant. Le chargeur Agent Plugins de Hermes l’activera au prochain redémarrage du gateway.
 - `GET /api/plugins/waiting-studio/references` liste les liens de référence enregistrés localement, avec leur checklist d’observation.
 - `POST /api/plugins/waiting-studio/references` enregistre un lien HTTPS YouTube/TikTok autorisé, avec une note facultative et la checklist d’observation; `DELETE /api/plugins/waiting-studio/references/{id}` le retire.
-- `GET /api/plugins/waiting-studio/content/{filename}` ouvre l’espace d’une VOD MP4 directement dans `Waiting`, liste ses brouillons, ses repères sauvegardés et renvoie les références actuelles.
+- `GET /api/plugins/waiting-studio/content/{filename}` ouvre l’espace d’une VOD MP4 directement dans `Waiting`, liste ses brouillons et repères sauvegardés, renvoie les références actuelles et `clips` (MP4 directs dans `Finish` dont le nom commence par le nom de base de la source suivi de `_`). `clipsTruncated` signale si le scan borné de `Finish` a été interrompu; les clips sont associés par convention de nommage, pas par métadonnées de projet.
 - `POST /api/plugins/waiting-studio/content/{filename}/moments` enregistre un repère horodaté (0–24 h), limité à 500 par rediffusion, avec une note (500 caractères max) et une cible `short`, `video` ou `both`.
 - `POST /api/plugins/waiting-studio/content/{filename}/items` enregistre un brouillon Short ou Vidéo et copie les références, notes et consignes d’observation du moment dans son instantané de création.
 
@@ -36,8 +37,8 @@ Depuis le dossier du plugin :
 python3 -m unittest discover -s tests -v
 python3 -m py_compile dashboard/plugin_api.py tests/test_plugin_api.py
 node --check dashboard/dist/index.js
-node --check media-service-worker.js
-node --check media-player.js
+node --check dashboard/media-service-worker.js
+node --check dashboard/media-player.js
 node tests/test_dashboard_bundle.js
 node tests/test_media_service_worker.js
 node tests/test_media_player_bridge.js

@@ -7,16 +7,18 @@ import math
 import os
 import re
 import stat
+import subprocess
 import tempfile
 import threading
 import uuid
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 router = APIRouter()
 FOLDERS = (("waiting", "Waiting"), ("finish", "Finish"))
@@ -40,6 +42,9 @@ _MAX_WAITING_SCAN_DEPTH = 16
 _MAX_WAITING_SCAN_ENTRIES = 20_000
 _REFERENCE_LOCK = threading.Lock()
 _CONTENT_LOCK = threading.Lock()
+_THUMBNAIL_GENERATION_LOCK = threading.BoundedSemaphore(2)
+_MAX_THUMBNAIL_BYTES = 2_000_000
+_THUMBNAIL_CACHE_ENTRIES = 128
 _REFERENCE_OBSERVATION_ITEMS = (
     ("hook", "Accroche et moment fort dans les premières secondes."),
     ("pacing", "Rythme, durée des plans et transitions."),
@@ -566,10 +571,19 @@ def _get_content_workspace(media_root: Path, home: Path, source_filename: str) -
     drafts = _list_content_drafts(home)
     with _CONTENT_LOCK:
         moments = _load_video_moments(home)
+    source_stem = Path(source_filename.rsplit("/", 1)[-1]).stem.casefold()
+    finish_inventory = _scan_folder(media_root, "finish", "Finish")
+    clips = [
+        {"name": video["name"], "sizeBytes": video["sizeBytes"]}
+        for video in finish_inventory.get("videos", [])
+        if video["name"].casefold().startswith(f"{source_stem}_")
+    ]
     return {
         "sourceFilename": source_filename,
         "items": [draft for draft in drafts if draft["sourceFilename"] == source_filename],
         "moments": [moment for moment in moments if moment["sourceFilename"] == source_filename],
+        "clips": clips,
+        "clipsTruncated": finish_inventory.get("truncated", False),
         "references": _list_references(home),
         "observationChecklist": _reference_observation_checklist(),
     }
@@ -849,6 +863,83 @@ def get_finished_video(filename: str) -> FileResponse:
         filename=path.name,
         stat_result=path.stat(),
         content_disposition_type="inline",
+    )
+
+
+@lru_cache(maxsize=_THUMBNAIL_CACHE_ENTRIES)
+def _generate_waiting_thumbnail(source_path: str, modified_ns: int, size_bytes: int) -> bytes:
+    """Extract one small JPEG on demand; cache a bounded number in process memory."""
+    del modified_ns, size_bytes  # Included in the cache key so changed sources invalidate old frames.
+    if not _THUMBNAIL_GENERATION_LOCK.acquire(blocking=False):
+        raise RuntimeError("thumbnail generation is busy")
+    try:
+        for seek_time in ("00:00:10", "00:00:00"):
+            try:
+                result = subprocess.run(
+                    [
+                        "ffmpeg",
+                        "-nostdin",
+                        "-hide_banner",
+                        "-loglevel",
+                        "error",
+                        "-ss",
+                        seek_time,
+                        "-i",
+                        source_path,
+                        "-an",
+                        "-sn",
+                        "-dn",
+                        "-frames:v",
+                        "1",
+                        "-vf",
+                        "scale=320:180:force_original_aspect_ratio=decrease",
+                        "-f",
+                        "image2pipe",
+                        "-vcodec",
+                        "mjpeg",
+                        "-q:v",
+                        "5",
+                        "pipe:1",
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                    timeout=15,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError("thumbnail generation timed out") from exc
+            image_bytes = result.stdout
+            if (
+                result.returncode == 0
+                and 4 <= len(image_bytes) <= _MAX_THUMBNAIL_BYTES
+                and image_bytes.startswith(b"\xff\xd8")
+                and image_bytes.endswith(b"\xff\xd9")
+            ):
+                return image_bytes
+        raise RuntimeError("thumbnail could not be generated")
+    finally:
+        _THUMBNAIL_GENERATION_LOCK.release()
+
+
+@router.get("/videos/waiting-thumbnails/{filename:path}")
+def get_waiting_thumbnail(filename: str) -> Response:
+    """Return one authenticated JPEG preview for a regular MP4 beneath Waiting."""
+    source_path = _resolve_waiting_video(_media_root(), filename)
+    if source_path is None:
+        raise HTTPException(status_code=404, detail="Video not found")
+    try:
+        metadata = source_path.stat()
+        image_bytes = _generate_waiting_thumbnail(
+            str(source_path),
+            metadata.st_mtime_ns,
+            metadata.st_size,
+        )
+    except (OSError, RuntimeError) as exc:
+        raise HTTPException(status_code=503, detail="Thumbnail unavailable") from exc
+    return Response(
+        content=image_bytes,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, max-age=3600"},
     )
 
 

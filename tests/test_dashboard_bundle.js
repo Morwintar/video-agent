@@ -124,6 +124,8 @@ const windowStub = {
           sourceFilename: waitingVideo.name,
           items: storedDrafts,
           moments: storedMoments,
+          clips: workspaceClips,
+          clipsTruncated: false,
           references: [savedReference],
           observationChecklist,
         };
@@ -195,6 +197,8 @@ async function flushEffects() {
 }
 
 const finalVideo = { name: "final clip.mp4", sizeBytes: 20 };
+const finishedClip = { name: "waiting-vod_scared_reaction_15s_TEST.mp4", sizeBytes: 24 };
+let workspaceClips = [finishedClip];
 const waitingVideo = { name: "records/waiting-vod.mp4", sizeBytes: 30 };
 const observationChecklist = [
   { id: "hook", label: "Accroche et moment fort dans les premières secondes" },
@@ -226,7 +230,15 @@ async function main() {
   resetHooks(baseState());
   let tree = render(React.createElement(registeredComponent, {}));
   assert.equal(findAll(tree, (node) => node.type === "button" && node.props.className === "wvs__play").length, 1,
-    "Finish should expose a play button");
+    "Finish should expose a play button inside its collapsed library");
+  const primaryLibrary = findAll(tree, (node) => node.type === "div" && node.props.className === "wvs__grid wvs__grid--primary")[0];
+  assert.ok(primaryLibrary, "the Waiting recording list should be the primary home view");
+  assert.equal(findAll(primaryLibrary, (node) => node.type === "section" && node.props.className === "wvs__panel").length, 1,
+    "the home view should focus on Waiting rather than mixing source VODs and outputs");
+  assert.equal(findAll(primaryLibrary, (node) => node.type === "div" && node.props.className === "wvs__thumbnail").length, 1,
+    "each Waiting recording should have a thumbnail slot in the list");
+  assert.ok(findAll(tree, (node) => node.type === "details" && node.props.className === "wvs__finish-library").length,
+    "the complete Finish inventory should remain available in a secondary disclosure");
   assert.equal(findAll(tree, (node) => node.type === "h2" && node.props.id === "waiting-studio-skills-title").length, 1,
     "custom skills section should render");
   assert.equal(findAll(tree, (node) => node.type === "h2" && node.props.id === "waiting-studio-references-title").length, 1,
@@ -282,9 +294,9 @@ async function main() {
   resetHooks(baseState());
   tree = render(React.createElement(registeredComponent, {}));
   await flushEffects();
-  stateValues[9] = "clip-review";
-  stateValues[10] = "Review finished clips.";
-  stateValues[11] = "## Checklist\n- Keep the source intact.";
+  stateValues[13] = "clip-review";
+  stateValues[14] = "Review finished clips.";
+  stateValues[15] = "## Checklist\n- Keep the source intact.";
   hookIndex = 0;
   tree = render(React.createElement(registeredComponent, {}));
   const form = findAll(tree, (node) => node.type === "form" && node.props.className === "wvs__skill-form")[0];
@@ -342,6 +354,20 @@ async function main() {
   tree = render(React.createElement(registeredComponent, {}));
   assert.equal(findAll(tree, (node) => node.type === "h1" && node.props.id === "wvs-content-title").length, 1,
     "the selected Waiting recording should show a dedicated content page");
+  stateValues[9] = { ...stateValues[9], clips: [] };
+  hookIndex = 0;
+  pendingEffects.length = 0;
+  tree = render(React.createElement(registeredComponent, {}));
+  assert.ok(findAll(tree, (node) => node.type === "p" && (node.children || []).includes("Aucun clip rendu associé à cette rediffusion. Les repères enregistrés ne sont pas des fichiers vidéo.")).length,
+    "the selected recording should explain when there is no rendered clip");
+  stateValues[9] = { ...stateValues[9], clips: [finishedClip] };
+  hookIndex = 0;
+  pendingEffects.length = 0;
+  tree = render(React.createElement(registeredComponent, {}));
+  assert.ok(findAll(tree, (node) => node.type === "h2" && node.props.id === "wvs-finished-clips-title").length,
+    "the selected recording should show its generated clips separately from markers");
+  const clipPlayButton = findAll(tree, (node) => node.type === "button" && node.props.className === "wvs__clip-play")[0];
+  assert.ok(clipPlayButton, "each generated clip should provide a preview action");
   assert.ok(findAll(tree, (node) => node.type === "a" && node.props.href === savedReference.url).length > 0,
     "the content page should show the saved reference");
   assert.ok(findAll(tree, (node) => node.type === "li" && (node.children || []).some((child) => typeof child === "string" && child.toLowerCase().includes("accroche"))).length > 0,
@@ -464,6 +490,17 @@ async function main() {
   tree = render(React.createElement(registeredComponent, {}));
   assert.equal(findAll(tree, (node) => node.type === "h3" && (node.children || []).includes("Retour dans la partie")).length, 1,
     "the saved content draft should appear in the selected VOD workspace");
+  const previewClipButton = findAll(tree, (node) => node.type === "button" && node.props.className === "wvs__clip-play")[0];
+  previewClipButton.props.onClick();
+  assert.equal(stateValues[7], finishedClip, "previewing a generated clip should open that Finish video");
+  hookIndex = 0;
+  pendingEffects.length = 0;
+  tree = render(React.createElement(registeredComponent, {}));
+  await flushEffects();
+  assert.ok(mediaCalls.some((call) => call.url.endsWith(`/finish/${encodeURIComponent(finishedClip.name)}`)),
+    "a generated clip preview should use the authenticated Finish video endpoint");
+  assert.ok(findAll(tree, (node) => node.props && node.props.role === "dialog").length > 0,
+    "the generated clip should open in the accessible video player dialog");
 }
 
 main().then(() => {

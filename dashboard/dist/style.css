@@ -1,7 +1,7 @@
 .wvs {
   box-sizing: border-box;
   width: 100%;
-  max-width: 76rem;
+  max-width: none;
   padding: 1.5rem;
   color: var(--color-foreground);
 }
@@ -51,6 +51,7 @@
 
 .wvs__refresh,
 .wvs__play,
+.wvs__clip-play,
 .wvs__close,
 .wvs__remove {
   min-height: 2.5rem;
@@ -81,6 +82,7 @@
 
 .wvs__refresh:hover:not(:disabled),
 .wvs__play:hover,
+.wvs__clip-play:hover,
 .wvs__close:hover,
 .wvs__remove:hover:not(:disabled) {
   background: var(--color-muted);
@@ -88,6 +90,7 @@
 
 .wvs__refresh:focus-visible,
 .wvs__play:focus-visible,
+.wvs__clip-play:focus-visible,
 .wvs__close:focus-visible,
 .wvs__remove:focus-visible,
 .wvs__skill-form input:focus-visible,
@@ -121,6 +124,63 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1rem;
   align-items: start;
+}
+
+.wvs__grid--primary {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.wvs__finish-library {
+  margin-top: 1rem;
+}
+
+.wvs__finish-library > summary {
+  width: fit-content;
+  padding: 0.5rem 0;
+  color: var(--color-muted-foreground);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.wvs__finish-library > summary:focus-visible {
+  outline: 2px solid var(--color-ring, var(--color-primary));
+  outline-offset: 3px;
+}
+
+.wvs__finish-library[open] > .wvs__panel {
+  margin-top: 0.75rem;
+}
+
+.wvs__clip-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.wvs__clip-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.wvs__clip-item .wvs__file-details {
+  gap: 0.25rem;
+}
+
+.wvs__clip-play {
+  flex: 0 0 auto;
+}
+
+.wvs__clip-warning {
+  margin: 0.5rem 1rem 1rem;
+  color: var(--color-muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.5;
 }
 
 .wvs__panel {
@@ -187,6 +247,40 @@
 
 .wvs__item:last-child {
   border-bottom: 0;
+}
+
+.wvs__item--waiting {
+  align-items: center;
+}
+
+.wvs__item--waiting .wvs__file-mark {
+  margin-top: 0;
+}
+
+.wvs__thumbnail {
+  display: grid;
+  flex: 0 0 10rem;
+  width: 10rem;
+  aspect-ratio: 16 / 9;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius, 0.5rem);
+  background: var(--color-muted);
+  color: var(--color-muted-foreground);
+}
+
+.wvs__thumbnail img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.wvs__thumbnail-placeholder {
+  padding: 0.5rem;
+  font-size: 0.6875rem;
+  text-align: center;
 }
 
 .wvs__file-mark {
@@ -533,12 +627,16 @@
   line-height: 1.5;
 }
 
+.wvs__workspace-shell {
+  width: 100%;
+}
+
 .wvs__workspace {
   box-sizing: border-box;
   display: grid;
   gap: 1rem;
   width: 100%;
-  max-width: 76rem;
+  max-width: none;
   padding: 1.5rem;
   color: var(--color-foreground);
 }
@@ -787,6 +885,20 @@
 
   .wvs__grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .wvs__thumbnail {
+    flex-basis: 7.5rem;
+    width: 7.5rem;
+  }
+
+  .wvs__clip-item {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .wvs__clip-play {
+    grid-column: 2;
+    justify-self: start;
   }
 
   .wvs__skill-form {
