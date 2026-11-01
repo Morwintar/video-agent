@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  "name": "waiting-studio",
+  "name": "video-agent",
   "version": "0.1.0",
-  "description": "Local video inventory and custom workflow skills for Hermes.",
+  "description": "Agent Editor local video inventory and custom workflow skills for Hermes.",
   "keywords": ["hermes", "video", "dashboard", "skills"],
   "extensions": {}
 }

@@ -1,7 +1,7 @@
 {
-  "name": "waiting-studio",
-  "label": "Montage vidéo",
-  "description": "Inventaire vidéo, lecteur Finish et skills personnalisés locaux.",
+  "name": "video-agent",
+  "label": "Agent Editor",
+  "description": "Agent Editor pour les rediffusions Waiting, leurs repères, brouillons et clips locaux.",
   "icon": "Film",
   "version": "0.1.0",
   "tab": {

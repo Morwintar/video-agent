@@ -11,19 +11,19 @@ const knownClients = new Set(["iframe-client"]);
 let authorizeClient = false;
 let forwardedRequest = null;
 const selfStub = {
-  location: new URL("https://dashboard.test/hermes/dashboard-plugins/waiting-studio/media-service-worker.js"),
-  registration: { scope: "https://dashboard.test/hermes/dashboard-plugins/waiting-studio/" },
+  location: new URL("https://dashboard.test/hermes/dashboard-plugins/video-agent/media-service-worker.js"),
+  registration: { scope: "https://dashboard.test/hermes/dashboard-plugins/video-agent/" },
   clients: {
     async get(clientId) {
       return knownClients.has(clientId) ? {
         id: clientId,
         postMessage(message, ports) {
-          if (!authorizeClient || message.type !== "waiting-studio:request-media-auth" || !ports || !ports[0]) return;
+          if (!authorizeClient || message.type !== "video-agent:request-media-auth" || !ports || !ports[0]) return;
           ports[0].postMessage({
-            type: "waiting-studio:media-auth-response",
+            type: "video-agent:media-auth-response",
             token: "refreshed-test-token",
             filename: message.filename,
-            apiUrl: `https://dashboard.test/hermes/api/plugins/waiting-studio/videos/waiting/${encodeURIComponent(message.filename)}?profile=work&codec=auto`,
+            apiUrl: `https://dashboard.test/hermes/api/plugins/video-agent/videos/waiting/${encodeURIComponent(message.filename)}?profile=work&codec=auto`,
           });
         },
       } : null;
@@ -55,16 +55,16 @@ async function main() {
 
   handlers.get("message")({
     data: {
-      type: "waiting-studio:set-media-auth",
+      type: "video-agent:set-media-auth",
       token: "ephemeral-test-token",
       filename: "records/waiting-vod.mp4",
-      apiUrl: "https://dashboard.test/hermes/api/plugins/waiting-studio/videos/waiting/records%2Fwaiting-vod.mp4?profile=work&codec=auto",
+      apiUrl: "https://dashboard.test/hermes/api/plugins/video-agent/videos/waiting/records%2Fwaiting-vod.mp4?profile=work&codec=auto",
     },
     source: { id: "iframe-client" },
   });
 
   let responsePromise = null;
-  const request = new Request("https://dashboard.test/hermes/dashboard-plugins/waiting-studio/stream/records%2Fwaiting-vod.mp4", {
+  const request = new Request("https://dashboard.test/hermes/dashboard-plugins/video-agent/stream/records%2Fwaiting-vod.mp4", {
     headers: { Range: "bytes=5-9" },
   });
   handlers.get("fetch")({
@@ -78,7 +78,7 @@ async function main() {
   assert.equal(response.headers.get("content-range"), "bytes 5-9/100");
   assert.equal(await response.text(), "bytes-5-9");
   assert.ok(forwardedRequest instanceof Request);
-  assert.equal(forwardedRequest.url, "https://dashboard.test/hermes/api/plugins/waiting-studio/videos/waiting/records%2Fwaiting-vod.mp4?profile=work&codec=auto");
+  assert.equal(forwardedRequest.url, "https://dashboard.test/hermes/api/plugins/video-agent/videos/waiting/records%2Fwaiting-vod.mp4?profile=work&codec=auto");
   assert.equal(forwardedRequest.headers.get("range"), "bytes=5-9", "the byte range must survive the proxy");
   assert.equal(forwardedRequest.mode, "same-origin", "media authorization must never be sent cross-origin");
   assert.equal(forwardedRequest.headers.get("x-hermes-session-token"), "ephemeral-test-token");
@@ -86,13 +86,13 @@ async function main() {
 
   let outsideScopeIntercepted = false;
   handlers.get("fetch")({
-    request: new Request("https://dashboard.test/api/plugins/waiting-studio/content/records%2Fwaiting-vod.mp4"),
+    request: new Request("https://dashboard.test/api/plugins/video-agent/content/records%2Fwaiting-vod.mp4"),
     clientId: "iframe-client",
     respondWith() { outsideScopeIntercepted = true; },
   });
   assert.equal(outsideScopeIntercepted, false, "the worker must leave unrelated dashboard requests untouched");
 
-  handlers.get("message")({ data: { type: "waiting-studio:clear-media-auth" }, source: { id: "iframe-client" } });
+  handlers.get("message")({ data: { type: "video-agent:clear-media-auth" }, source: { id: "iframe-client" } });
   authorizeClient = true;
   responsePromise = null;
   handlers.get("fetch")({
@@ -104,7 +104,7 @@ async function main() {
   assert.equal(forwardedRequest.headers.get("x-hermes-session-token"), "refreshed-test-token");
   assert.equal(new URL(forwardedRequest.url).searchParams.has("token"), false);
 
-  handlers.get("message")({ data: { type: "waiting-studio:clear-media-auth" }, source: { id: "iframe-client" } });
+  handlers.get("message")({ data: { type: "video-agent:clear-media-auth" }, source: { id: "iframe-client" } });
   knownClients.delete("iframe-client");
   responsePromise = null;
   handlers.get("fetch")({

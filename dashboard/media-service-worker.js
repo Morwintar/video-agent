@@ -27,8 +27,8 @@ function validateApiUrl(rawUrl, filename) {
     return null;
   }
   if (url.origin !== self.location.origin || url.username || url.password || url.hash || !validFilename(filename)) return null;
-  const routeSuffix = `/api/plugins/waiting-studio/videos/waiting/${encodeURIComponent(filename)}`;
-  const routeIndex = url.pathname.lastIndexOf("/api/plugins/waiting-studio/videos/waiting/");
+  const routeSuffix = `/api/plugins/video-agent/videos/waiting/${encodeURIComponent(filename)}`;
+  const routeIndex = url.pathname.lastIndexOf("/api/plugins/video-agent/videos/waiting/");
   if (routeIndex < 0 || url.pathname !== `${url.pathname.slice(0, routeIndex)}${routeSuffix}`) return null;
   if ([...url.searchParams.keys()].some((key) => !["profile", "codec"].includes(key))
       || url.searchParams.getAll("profile").length > 1
@@ -65,7 +65,7 @@ async function requestClientAuthorization(client, filename) {
     const timeout = setTimeout(() => finish(null), 5000);
     channel.port1.onmessage = (event) => {
       const data = event.data;
-      if (!data || data.type !== "waiting-studio:media-auth-response" || data.filename !== filename) {
+      if (!data || data.type !== "video-agent:media-auth-response" || data.filename !== filename) {
         finish(null);
         return;
       }
@@ -77,7 +77,7 @@ async function requestClientAuthorization(client, filename) {
       finish({ token: data.token, filename, apiUrl });
     };
     try {
-      client.postMessage({ type: "waiting-studio:request-media-auth", filename }, [channel.port2]);
+      client.postMessage({ type: "video-agent:request-media-auth", filename }, [channel.port2]);
     } catch (_error) {
       finish(null);
     }
@@ -127,11 +127,11 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("message", (event) => {
   const clientId = event.source && event.source.id;
   if (!clientId || !event.data || typeof event.data !== "object") return;
-  if (event.data.type === "waiting-studio:clear-media-auth") {
+  if (event.data.type === "video-agent:clear-media-auth") {
     mediaAuthorizationByClient.delete(clientId);
     return;
   }
-  if (event.data.type !== "waiting-studio:set-media-auth") return;
+  if (event.data.type !== "video-agent:set-media-auth") return;
 
   const { token, filename } = event.data;
   const apiUrl = validateApiUrl(event.data.apiUrl, filename);
@@ -141,7 +141,7 @@ self.addEventListener("message", (event) => {
   }
   mediaAuthorizationByClient.set(clientId, { token, filename, apiUrl });
   if (event.ports && event.ports[0]) {
-    event.ports[0].postMessage({ type: "waiting-studio:media-auth-ready" });
+    event.ports[0].postMessage({ type: "video-agent:media-auth-ready" });
   }
 });
 

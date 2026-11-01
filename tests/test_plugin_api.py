@@ -191,11 +191,11 @@ class NewFeatureTests(unittest.TestCase):
             (finish / "final.mp4").write_bytes(b"0123456789")
             self.assertTrue(hasattr(plugin_api, "get_finished_video"), "finish video endpoint is missing")
             app = FastAPI()
-            app.include_router(plugin_api.router, prefix="/api/plugins/waiting-studio")
+            app.include_router(plugin_api.router, prefix="/api/plugins/video-agent")
             with patch("plugin_api._media_root", return_value=root):
                 with TestClient(app) as client:
                     response = client.get(
-                        "/api/plugins/waiting-studio/videos/finish/final.mp4",
+                        "/api/plugins/video-agent/videos/finish/final.mp4",
                         headers={"Range": "bytes=2-5"},
                     )
 
@@ -240,7 +240,7 @@ class NewFeatureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir="/opt/data/cache/scratch") as temp_dir:
             plugin_root = Path(temp_dir)
             app = FastAPI()
-            app.include_router(plugin_api.router, prefix="/api/plugins/waiting-studio")
+            app.include_router(plugin_api.router, prefix="/api/plugins/video-agent")
             payload = {
                 "name": "clip-review",
                 "description": "Review clips before export.",
@@ -248,11 +248,11 @@ class NewFeatureTests(unittest.TestCase):
             }
             with patch("plugin_api._plugin_root", return_value=plugin_root):
                 with TestClient(app) as client:
-                    created = client.post("/api/plugins/waiting-studio/skills", json=payload)
-                    listing = client.get("/api/plugins/waiting-studio/skills")
-                    duplicate = client.post("/api/plugins/waiting-studio/skills", json=payload)
+                    created = client.post("/api/plugins/video-agent/skills", json=payload)
+                    listing = client.get("/api/plugins/video-agent/skills")
+                    duplicate = client.post("/api/plugins/video-agent/skills", json=payload)
                     invalid = client.post(
-                        "/api/plugins/waiting-studio/skills",
+                        "/api/plugins/video-agent/skills",
                         json={**payload, "name": "../escape"},
                     )
 
@@ -282,7 +282,7 @@ class NewFeatureTests(unittest.TestCase):
             )
             package = load_agent_plugin(plugin_root, plugin_root / "data")
 
-        self.assertEqual(package.name, "waiting-studio")
+        self.assertEqual(package.name, "video-agent")
         self.assertEqual([skill.name for skill in package.skills], ["clip-review"])
         self.assertEqual(package.diagnostics, ())
 
@@ -373,18 +373,18 @@ class NewFeatureTests(unittest.TestCase):
             (media_root / "Finish").mkdir()
             (waiting / "nested-recording.mp4").write_bytes(b"video")
             app = FastAPI()
-            app.include_router(plugin_api.router, prefix="/api/plugins/waiting-studio")
+            app.include_router(plugin_api.router, prefix="/api/plugins/video-agent")
             with patch("plugin_api._media_root", return_value=media_root), patch(
                 "plugin_api._references_home", return_value=home
             ):
                 with TestClient(app) as client:
-                    workspace = client.get("/api/plugins/waiting-studio/content/records%2Fnested-recording.mp4")
+                    workspace = client.get("/api/plugins/video-agent/content/records%2Fnested-recording.mp4")
                     moment = client.post(
-                        "/api/plugins/waiting-studio/content/records%2Fnested-recording.mp4/moments",
+                        "/api/plugins/video-agent/content/records%2Fnested-recording.mp4/moments",
                         json={"timeSeconds": 12.5, "note": "Moment fort", "targetFormat": "short"},
                     )
                     draft = client.post(
-                        "/api/plugins/waiting-studio/content/records%2Fnested-recording.mp4/items",
+                        "/api/plugins/video-agent/content/records%2Fnested-recording.mp4/items",
                         json={"format": "short", "title": "Le duel", "concept": "Retour spectaculaire"},
                     )
 
@@ -508,20 +508,20 @@ class NewFeatureTests(unittest.TestCase):
                 self.skipTest(f"Symlinks are unavailable: {exc}")
 
             app = FastAPI()
-            app.include_router(plugin_api.router, prefix="/api/plugins/waiting-studio")
+            app.include_router(plugin_api.router, prefix="/api/plugins/video-agent")
             with patch("plugin_api._media_root", return_value=root):
                 with TestClient(app) as client:
                     response = client.get(
-                        "/api/plugins/waiting-studio/videos/waiting-thumbnails/records%2Fsample.mp4"
+                        "/api/plugins/video-agent/videos/waiting-thumbnails/records%2Fsample.mp4"
                     )
                     traversal = client.get(
-                        "/api/plugins/waiting-studio/videos/waiting-thumbnails/%2E%2E%2Foutside.mp4"
+                        "/api/plugins/video-agent/videos/waiting-thumbnails/%2E%2E%2Foutside.mp4"
                     )
                     linked = client.get(
-                        "/api/plugins/waiting-studio/videos/waiting-thumbnails/linked.mp4"
+                        "/api/plugins/video-agent/videos/waiting-thumbnails/linked.mp4"
                     )
                     invalid = client.get(
-                        "/api/plugins/waiting-studio/videos/waiting-thumbnails/records%2Fbroken.mp4"
+                        "/api/plugins/video-agent/videos/waiting-thumbnails/records%2Fbroken.mp4"
                     )
 
         self.assertEqual(response.status_code, 200)
@@ -551,19 +551,19 @@ class NewFeatureTests(unittest.TestCase):
             (nested / "record.mp4").write_bytes(b"abcdefghij")
             (root / "Finish" / "finished.mp4").write_bytes(b"finished")
             app = FastAPI()
-            app.include_router(plugin_api.router, prefix="/api/plugins/waiting-studio")
+            app.include_router(plugin_api.router, prefix="/api/plugins/video-agent")
             with patch("plugin_api._media_root", return_value=root):
                 with TestClient(app) as client:
                     response = client.get(
-                        "/api/plugins/waiting-studio/videos/waiting/source.mp4",
+                        "/api/plugins/video-agent/videos/waiting/source.mp4",
                         headers={"Range": "bytes=2-5"},
                     )
                     nested_response = client.get(
-                        "/api/plugins/waiting-studio/videos/waiting/records%2Frecord.mp4",
+                        "/api/plugins/video-agent/videos/waiting/records%2Frecord.mp4",
                         headers={"Range": "bytes=3-6"},
                     )
-                    finish_only = client.get("/api/plugins/waiting-studio/videos/waiting/finished.mp4")
-                    traversal = client.get("/api/plugins/waiting-studio/videos/waiting/%2E%2E%2Foutside.mp4")
+                    finish_only = client.get("/api/plugins/video-agent/videos/waiting/finished.mp4")
+                    traversal = client.get("/api/plugins/video-agent/videos/waiting/%2E%2E%2Foutside.mp4")
 
         self.assertEqual(response.status_code, 206)
         self.assertEqual(response.content, b"2345")
@@ -595,21 +595,21 @@ class NewFeatureTests(unittest.TestCase):
             (compat / "source.mp4").write_bytes(b"hvc1-compatible-copy")
 
             app = FastAPI()
-            app.include_router(plugin_api.router, prefix="/api/plugins/waiting-studio")
+            app.include_router(plugin_api.router, prefix="/api/plugins/video-agent")
             with patch("plugin_api._media_root", return_value=media_root), patch(
                 "plugin_api._references_home", return_value=home
             ):
                 with TestClient(app) as client:
                     preferred = client.get(
-                        "/api/plugins/waiting-studio/videos/waiting/records%2Fsource.mp4?codec=auto",
+                        "/api/plugins/video-agent/videos/waiting/records%2Fsource.mp4?codec=auto",
                         headers={"Range": "bytes=0-3"},
                     )
                     original = client.get(
-                        "/api/plugins/waiting-studio/videos/waiting/records%2Fsource.mp4?codec=source",
+                        "/api/plugins/video-agent/videos/waiting/records%2Fsource.mp4?codec=source",
                         headers={"Range": "bytes=0-2"},
                     )
                     invalid_codec = client.get(
-                        "/api/plugins/waiting-studio/videos/waiting/records%2Fsource.mp4?codec=unknown"
+                        "/api/plugins/video-agent/videos/waiting/records%2Fsource.mp4?codec=unknown"
                     )
 
         self.assertEqual(preferred.status_code, 206)
@@ -643,7 +643,7 @@ class NewFeatureTests(unittest.TestCase):
             )
 
             app = FastAPI()
-            app.include_router(plugin_api.router, prefix="/api/plugins/waiting-studio")
+            app.include_router(plugin_api.router, prefix="/api/plugins/video-agent")
             payload = {
                 "format": "short",
                 "title": "Premier essai",
@@ -656,35 +656,35 @@ class NewFeatureTests(unittest.TestCase):
                 "plugin_api._references_home", return_value=home
             ):
                 with TestClient(app) as client:
-                    initial = client.get("/api/plugins/waiting-studio/content/source.mp4")
-                    created = client.post("/api/plugins/waiting-studio/content/source.mp4/items", json=payload)
+                    initial = client.get("/api/plugins/video-agent/content/source.mp4")
+                    created = client.post("/api/plugins/video-agent/content/source.mp4/items", json=payload)
                     created_moment = client.post(
-                        "/api/plugins/waiting-studio/content/source.mp4/moments",
+                        "/api/plugins/video-agent/content/source.mp4/moments",
                         json={"timeSeconds": 123.456, "note": "Le retournement du duel.", "targetFormat": "short"},
                     )
                     invalid_moment = client.post(
-                        "/api/plugins/waiting-studio/content/source.mp4/moments",
+                        "/api/plugins/video-agent/content/source.mp4/moments",
                         json={"timeSeconds": -1, "note": "Temps invalide", "targetFormat": "short"},
                     )
                     invalid_target = client.post(
-                        "/api/plugins/waiting-studio/content/source.mp4/moments",
+                        "/api/plugins/video-agent/content/source.mp4/moments",
                         json={"timeSeconds": 12, "note": "Cible invalide", "targetFormat": []},
                     )
                     plugin_api._save_references(home, [{
                         **saved_reference,
                         "observationChecklist": [{"id": "hook", "label": "Consigne modifiée après création."}],
                     }])
-                    listing = client.get("/api/plugins/waiting-studio/content/source.mp4")
+                    listing = client.get("/api/plugins/video-agent/content/source.mp4")
                     invalid_format = client.post(
-                        "/api/plugins/waiting-studio/content/source.mp4/items",
+                        "/api/plugins/video-agent/content/source.mp4/items",
                         json={**payload, "format": "unknown"},
                     )
                     invalid_title = client.post(
-                        "/api/plugins/waiting-studio/content/source.mp4/items",
+                        "/api/plugins/video-agent/content/source.mp4/items",
                         json={**payload, "title": "  "},
                     )
-                    missing_source = client.get("/api/plugins/waiting-studio/content/finished.mp4")
-                    traversal = client.get("/api/plugins/waiting-studio/content/%2E%2E%2Foutside.mp4")
+                    missing_source = client.get("/api/plugins/video-agent/content/finished.mp4")
+                    traversal = client.get("/api/plugins/video-agent/content/%2E%2E%2Foutside.mp4")
                     source_unchanged = source.read_bytes() == b"original-source"
 
         self.assertEqual(initial.status_code, 200)
@@ -722,18 +722,18 @@ class NewFeatureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir="/opt/data/cache/scratch") as temp_dir:
             home = Path(temp_dir)
             app = FastAPI()
-            app.include_router(plugin_api.router, prefix="/api/plugins/waiting-studio")
+            app.include_router(plugin_api.router, prefix="/api/plugins/video-agent")
             payload = {
                 "url": "https://www.youtube.com/shorts/abc123",
                 "note": "Référence de rythme.",
             }
             with patch("plugin_api._references_home", return_value=home):
                 with TestClient(app) as client:
-                    created = client.post("/api/plugins/waiting-studio/references", json=payload)
-                    listing = client.get("/api/plugins/waiting-studio/references")
+                    created = client.post("/api/plugins/video-agent/references", json=payload)
+                    listing = client.get("/api/plugins/video-agent/references")
                     reference_id = created.json()["reference"]["id"]
-                    removed = client.delete(f"/api/plugins/waiting-studio/references/{reference_id}")
-                    empty_listing = client.get("/api/plugins/waiting-studio/references")
+                    removed = client.delete(f"/api/plugins/video-agent/references/{reference_id}")
+                    empty_listing = client.get("/api/plugins/video-agent/references")
 
         self.assertEqual(created.status_code, 201)
         self.assertEqual(created.json()["reference"]["platform"], "YouTube")

@@ -8,12 +8,12 @@ const playerJsPath = path.join(__dirname, "../dashboard/media-player.js");
 const playerHtmlPath = path.join(__dirname, "../dashboard/media-player.html");
 const source = fs.readFileSync(playerJsPath, "utf8");
 const html = fs.readFileSync(playerHtmlPath, "utf8");
-const base = "https://dashboard.test/hermes/dashboard-plugins/@work/waiting-studio/";
+const base = "https://dashboard.test/hermes/dashboard-plugins/@work/video-agent/";
 const frameUrl = new URL("media-player.html", base).href;
 const workerUrl = new URL("media-service-worker.js", base).href;
 const filename = "records/waiting-vod.mp4";
 const streamUrl = new URL(`stream/${encodeURIComponent(filename)}`, base).href;
-const apiUrl = "https://dashboard.test/hermes/api/plugins/waiting-studio/videos/waiting/records%2Fwaiting-vod.mp4?profile=work&codec=auto";
+const apiUrl = "https://dashboard.test/hermes/api/plugins/video-agent/videos/waiting/records%2Fwaiting-vod.mp4?profile=work&codec=auto";
 const parentMessages = [];
 const parentWindow = { postMessage(message, origin) { parentMessages.push({ message, origin }); } };
 const windowListeners = new Map();
@@ -32,8 +32,8 @@ const activeWorker = {
   state: "activated",
   postMessage(message, ports) {
     workerMessages.push(message);
-    if (message.type === "waiting-studio:set-media-auth" && ports && ports[0]) {
-      ports[0].postMessage({ type: "waiting-studio:media-auth-ready" });
+    if (message.type === "video-agent:set-media-auth" && ports && ports[0]) {
+      ports[0].postMessage({ type: "video-agent:media-auth-ready" });
     }
   },
 };
@@ -61,7 +61,7 @@ const video = {
 };
 const status = { textContent: "", hidden: false };
 const documentStub = {
-  getElementById(id) { return id === "waiting-studio-video" ? video : status; },
+  getElementById(id) { return id === "video-agent-video" ? video : status; },
 };
 const windowStub = {
   location: { origin: "https://dashboard.test", href: frameUrl },
@@ -92,13 +92,13 @@ async function main() {
   initialize({
     origin: "https://attacker.test",
     source: parentWindow,
-    data: { type: "waiting-studio:init-media-player", token: "ignored", filename, apiUrl, streamUrl },
+    data: { type: "video-agent:init-media-player", token: "ignored", filename, apiUrl, streamUrl },
   });
   initialize({
     origin: windowStub.location.origin,
     source: parentWindow,
     data: {
-      type: "waiting-studio:init-media-player",
+      type: "video-agent:init-media-player",
       token: "ephemeral-test-token",
       filename,
       apiUrl: `${apiUrl}#unexpected`,
@@ -113,7 +113,7 @@ async function main() {
     origin: windowStub.location.origin,
     source: parentWindow,
     data: {
-      type: "waiting-studio:init-media-player",
+      type: "video-agent:init-media-player",
       token: "ephemeral-test-token",
       filename,
       apiUrl,
@@ -127,30 +127,30 @@ async function main() {
   assert.equal(serviceWorkerOptions[0].options.updateViaCache, "none");
   assert.equal(video.src, streamUrl, "the media element should request the scoped URL intercepted by the worker");
   assert.equal(videoLoadCount, 1);
-  assert.equal(workerMessages[0].type, "waiting-studio:set-media-auth");
+  assert.equal(workerMessages[0].type, "video-agent:set-media-auth");
   assert.equal(workerMessages[0].token, "ephemeral-test-token");
   assert.equal(new URL(workerMessages[0].apiUrl).searchParams.has("token"), false);
   assert.equal(video.src.includes("ephemeral-test-token"), false, "the session token must not be embedded in any media URL");
 
   for (const handler of videoListeners.get("loadedmetadata")) handler();
   assert.ok(status.hidden, "the loading status should disappear when metadata arrives");
-  assert.equal(parentMessages[0].message.type, "waiting-studio:player-ready");
-  assert.equal(parentMessages[1].message.type, "waiting-studio:time-update");
+  assert.equal(parentMessages[0].message.type, "video-agent:player-ready");
+  assert.equal(parentMessages[1].message.type, "video-agent:time-update");
   assert.equal(parentMessages[1].message.duration, 7200);
   assert.equal(parentMessages[0].origin, windowStub.location.origin);
   for (const handler of videoListeners.get("timeupdate")) handler();
-  assert.equal(parentMessages[2].message.type, "waiting-studio:time-update");
+  assert.equal(parentMessages[2].message.type, "video-agent:time-update");
 
   const seekHandler = [...windowListeners.get("message")].find((handler) => handler !== initialize);
   seekHandler({
     origin: windowStub.location.origin,
     source: parentWindow,
-    data: { type: "waiting-studio:seek", timeSeconds: 321.5 },
+    data: { type: "video-agent:seek", timeSeconds: 321.5 },
   });
   assert.equal(video.currentTime, 321.5, "the iframe should support seeking to a saved marker");
 
   for (const handler of windowListeners.get("pagehide")) handler();
-  assert.ok(workerMessages.some((message) => message.type === "waiting-studio:clear-media-auth"));
+  assert.ok(workerMessages.some((message) => message.type === "video-agent:clear-media-auth"));
   console.log("Waiting media player bridge tests passed.");
 }
 

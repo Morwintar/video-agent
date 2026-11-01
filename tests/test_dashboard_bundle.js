@@ -21,11 +21,11 @@ const dialogNode = {
   focus() { documentStub.activeElement = dialogNode; focusEvents.push("dialog"); },
   querySelectorAll() { return [focusableFirst, focusableLast]; },
 };
-const pluginScript = { src: "https://dashboard.test/hermes/dashboard-plugins/@work/waiting-studio/dashboard/dist/index.js" };
+const pluginScript = { src: "https://dashboard.test/hermes/dashboard-plugins/@work/video-agent/dashboard/dist/index.js" };
 const documentStub = {
   activeElement: previousFocus,
   getElementById() { return dialogNode; },
-  querySelector(selector) { return selector === 'script[data-hermes-plugin="waiting-studio"]' ? pluginScript : null; },
+  querySelector(selector) { return selector === 'script[data-hermes-plugin="video-agent"]' ? pluginScript : null; },
 };
 
 global.document = documentStub;
@@ -141,7 +141,7 @@ const windowStub = {
   },
   __HERMES_PLUGINS__: {
     register(name, component) {
-      assert.equal(name, "waiting-studio");
+      assert.equal(name, "video-agent");
       registeredComponent = component;
     },
   },
@@ -227,6 +227,10 @@ function baseState(selectedVideo = null, source = "") {
 }
 
 async function main() {
+  const dashboardManifest = JSON.parse(fs.readFileSync(path.join(__dirname, "../dashboard/manifest.json"), "utf8"));
+  assert.equal(dashboardManifest.name, "video-agent", "dashboard plugin id should match the renamed package");
+  assert.equal(dashboardManifest.label, "Agent Editor", "the dashboard tab should use the requested UI name");
+
   resetHooks(baseState());
   let tree = render(React.createElement(registeredComponent, {}));
   assert.equal(findAll(tree, (node) => node.type === "button" && node.props.className === "wvs__play").length, 1,
@@ -239,9 +243,9 @@ async function main() {
     "each Waiting recording should have a thumbnail slot in the list");
   assert.ok(findAll(tree, (node) => node.type === "details" && node.props.className === "wvs__finish-library").length,
     "the complete Finish inventory should remain available in a secondary disclosure");
-  assert.equal(findAll(tree, (node) => node.type === "h2" && node.props.id === "waiting-studio-skills-title").length, 1,
+  assert.equal(findAll(tree, (node) => node.type === "h2" && node.props.id === "video-agent-skills-title").length, 1,
     "custom skills section should render");
-  assert.equal(findAll(tree, (node) => node.type === "h2" && node.props.id === "waiting-studio-references-title").length, 1,
+  assert.equal(findAll(tree, (node) => node.type === "h2" && node.props.id === "video-agent-references-title").length, 1,
     "short-form reference section should render");
   assert.equal(findAll(tree, (node) => node.type === "form" && node.props.className === "wvs__reference-form").length, 1,
     "reference section should expose a link form");
@@ -303,7 +307,7 @@ async function main() {
   await form.props.onSubmit({ preventDefault() {} });
   const post = apiCalls.find((call) => call.init && call.init.method === "POST");
   assert.ok(post, "adding a skill should use the authenticated JSON API");
-  assert.equal(post.url, "/api/plugins/waiting-studio/skills");
+  assert.equal(post.url, "/api/plugins/video-agent/skills");
   assert.equal(JSON.parse(post.init.body).name, "clip-review");
 
   const referenceUrlInput = findAll(tree, (node) => node.type === "input" && node.props.id === "wvs-reference-url")[0];
@@ -374,7 +378,7 @@ async function main() {
     "the content page should show observation points");
   const waitingFrame = findAll(tree, (node) => node.type === "iframe" && node.props.className === "wvs__waiting-video")[0];
   assert.ok(waitingFrame, "loopback token mode should use a scoped player bridge instead of downloading the complete VOD");
-  assert.ok(waitingFrame.props.src.endsWith("/hermes/dashboard-plugins/@work/waiting-studio/media-player.html"),
+  assert.ok(waitingFrame.props.src.endsWith("/hermes/dashboard-plugins/@work/video-agent/media-player.html"),
     "the player bridge should come from the active profile's plugin assets");
   assert.equal(waitingFrame.props.src.includes("test-session-token"), false, "the session token must never appear in the player URL");
   const frameMessages = [];
@@ -386,18 +390,18 @@ async function main() {
   assert.equal(frameMessages[0].data.token, "test-session-token");
   assert.equal(frameMessages[0].data.filename, waitingVideo.name);
   assert.equal(frameMessages[0].data.apiUrl,
-    "https://dashboard.test/hermes/api/plugins/waiting-studio/videos/waiting/records%2Fwaiting-vod.mp4?profile=work&codec=auto");
-  assert.ok(frameMessages[0].data.streamUrl.endsWith("/hermes/dashboard-plugins/@work/waiting-studio/stream/records%2Fwaiting-vod.mp4"));
+    "https://dashboard.test/hermes/api/plugins/video-agent/videos/waiting/records%2Fwaiting-vod.mp4?profile=work&codec=auto");
+  assert.ok(frameMessages[0].data.streamUrl.endsWith("/hermes/dashboard-plugins/@work/video-agent/stream/records%2Fwaiting-vod.mp4"));
   assert.equal(typeof windowHandlers.message, "function", "the content workspace should listen for same-origin player messages");
   windowHandlers.message({
     origin: windowStub.location.origin,
     source: frameWindow,
-    data: { type: "waiting-studio:player-ready", duration: 7200 },
+    data: { type: "video-agent:player-ready", duration: 7200 },
   });
   windowHandlers.message({
     origin: windowStub.location.origin,
     source: frameWindow,
-    data: { type: "waiting-studio:time-update", currentTime: 123.456, duration: 7200 },
+    data: { type: "video-agent:time-update", currentTime: 123.456, duration: 7200 },
   });
   hookIndex = 0;
   pendingEffects.length = 0;
@@ -411,7 +415,7 @@ async function main() {
   tree = render(React.createElement(registeredComponent, {}));
   const waitingPlayer = findAll(tree, (node) => node.type === "video" && node.props.className === "wvs__waiting-video")[0];
   assert.ok(waitingPlayer, "the VOD should have a native player in protected-session mode");
-  assert.equal(waitingPlayer.props.src, "/hermes/api/plugins/waiting-studio/videos/waiting/records%2Fwaiting-vod.mp4?profile=work&codec=auto");
+  assert.equal(waitingPlayer.props.src, "/hermes/api/plugins/video-agent/videos/waiting/records%2Fwaiting-vod.mp4?profile=work&codec=auto");
   assert.equal(waitingPlayer.props.preload, "metadata", "the player should not preload the entire VOD");
   assert.equal(waitingPlayer.props.controls, true, "the player should expose seek controls");
   waitingPlayer.props.ref.current = {
@@ -447,7 +451,7 @@ async function main() {
   const seekMessages = [];
   waitingPlayer.props.ref.current = { contentWindow: { postMessage(data, origin) { seekMessages.push({ data, origin }); } } };
   seekButton.props.onClick();
-  assert.equal(seekMessages[0].data.type, "waiting-studio:seek", "clicking a saved marker should seek inside the authenticated iframe");
+  assert.equal(seekMessages[0].data.type, "video-agent:seek", "clicking a saved marker should seek inside the authenticated iframe");
   assert.equal(seekMessages[0].data.timeSeconds, 123.456);
   assert.equal(seekMessages[0].origin, windowStub.location.origin);
   const addMomentButton = findAll(tree, (node) => node.type === "button" && node.props.className === "wvs__moment-add")[0];

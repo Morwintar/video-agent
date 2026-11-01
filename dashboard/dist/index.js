@@ -7,11 +7,11 @@
   const React = SDK.React;
   const h = React.createElement;
   const { useState, useEffect, useCallback, useRef } = SDK.hooks;
-  const PLUGIN_SCRIPT = document.currentScript || document.querySelector('script[data-hermes-plugin="waiting-studio"]');
-  const API_URL = "/api/plugins/waiting-studio/videos";
-  const SKILLS_URL = "/api/plugins/waiting-studio/skills";
-  const REFERENCES_URL = "/api/plugins/waiting-studio/references";
-  const CONTENT_URL = "/api/plugins/waiting-studio/content";
+  const PLUGIN_SCRIPT = document.currentScript || document.querySelector('script[data-hermes-plugin="video-agent"]');
+  const API_URL = "/api/plugins/video-agent/videos";
+  const SKILLS_URL = "/api/plugins/video-agent/skills";
+  const REFERENCES_URL = "/api/plugins/video-agent/references";
+  const CONTENT_URL = "/api/plugins/video-agent/content";
 
   function formatBytes(bytes) {
     if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) return "";
@@ -60,7 +60,7 @@
     const markerIndex = scriptUrl.pathname.indexOf(marker);
     if (markerIndex < 0) return null;
     const assetPath = scriptUrl.pathname.slice(markerIndex + marker.length);
-    const pluginMatch = /^(?:@([^/]+)\/)?waiting-studio\//.exec(assetPath);
+    const pluginMatch = /^(?:@([^/]+)\/)?video-agent\//.exec(assetPath);
     if (!pluginMatch) return null;
     const rootPath = scriptUrl.pathname.slice(0, markerIndex + marker.length + pluginMatch[0].length);
     let profile = "";
@@ -77,7 +77,7 @@
   function waitingVideoApiUrl(filename, profile) {
     const rawBasePath = window.__HERMES_BASE_PATH__ || "";
     const basePath = rawBasePath ? "/" + rawBasePath.split("/").filter(Boolean).join("/") : "";
-    const url = new URL(`${basePath}/api/plugins/waiting-studio/videos/waiting/${encodeURIComponent(filename)}`, window.location.origin);
+    const url = new URL(`${basePath}/api/plugins/video-agent/videos/waiting/${encodeURIComponent(filename)}`, window.location.origin);
     if (profile) url.searchParams.set("profile", profile);
     url.searchParams.set("codec", "auto");
     return `${url.pathname}${url.search}`;
@@ -141,7 +141,7 @@
     const folder = props.folder;
     const videos = Array.isArray(folder.videos) ? folder.videos : [];
     const count = Number.isInteger(folder.count) ? folder.count : videos.length;
-    const titleId = `waiting-studio-${folder.id}-title`;
+    const titleId = `video-agent-${folder.id}-title`;
 
     let content;
     if (props.loading && !props.hasSnapshot) {
@@ -312,7 +312,7 @@
 
     useEffect(() => {
       if (!props.video) return undefined;
-      const dialogId = "waiting-studio-player-dialog";
+      const dialogId = "video-agent-player-dialog";
       const dialog = document.getElementById(dialogId);
       const previousFocus = document.activeElement;
       if (dialog) dialog.focus();
@@ -350,7 +350,7 @@
     }, [props.video, props.onClose]);
 
     if (!props.video) return null;
-    const titleId = "waiting-studio-player-title";
+    const titleId = "video-agent-player-title";
 
     return h(
       "div",
@@ -359,7 +359,7 @@
         "section",
         {
           className: "wvs__dialog",
-          id: "waiting-studio-player-dialog",
+          id: "video-agent-player-dialog",
           tabIndex: -1,
           role: "dialog",
           "aria-modal": "true",
@@ -441,13 +441,13 @@
 
     return h(
       "section",
-      { className: "wvs__panel wvs__skills", "aria-labelledby": "waiting-studio-skills-title" },
+      { className: "wvs__panel wvs__skills", "aria-labelledby": "video-agent-skills-title" },
       h(
         "header",
         { className: "wvs__panel-header" },
         h("div", null,
-          h("h2", { className: "wvs__panel-title", id: "waiting-studio-skills-title" }, "Skills personnalisés"),
-          h("p", { className: "wvs__panel-subtitle" }, "Ajoutez des instructions réutilisables à Waiting Studio."),
+          h("h2", { className: "wvs__panel-title", id: "video-agent-skills-title" }, "Skills personnalisés"),
+          h("p", { className: "wvs__panel-subtitle" }, "Ajoutez des instructions réutilisables à Agent Editor."),
         ),
         h("span", { className: "wvs__count" }, `${props.skills.length} skill${props.skills.length === 1 ? "" : "s"}`),
       ),
@@ -617,10 +617,10 @@
 
     return h(
       "section",
-      { className: "wvs__panel wvs__references", "aria-labelledby": "waiting-studio-references-title" },
+      { className: "wvs__panel wvs__references", "aria-labelledby": "video-agent-references-title" },
       h("header", { className: "wvs__panel-header" },
         h("div", null,
-          h("h2", { className: "wvs__panel-title", id: "waiting-studio-references-title" }, "Références pour les shorts"),
+          h("h2", { className: "wvs__panel-title", id: "video-agent-references-title" }, "Références pour les shorts"),
           h("p", { className: "wvs__panel-subtitle" }, "Collez des liens TikTok ou YouTube qui montrent le style recherché."),
         ),
         h("span", { className: "wvs__count" }, `${references.length} référence${references.length === 1 ? "" : "s"}`),
@@ -711,7 +711,7 @@
             if (!frame || !frame.contentWindow) return;
             const streamUrl = `${assetLocation.assetRoot}stream/${encodeURIComponent(props.video.name)}`;
             frame.contentWindow.postMessage({
-              type: "waiting-studio:init-media-player",
+              type: "video-agent:init-media-player",
               token: window.__HERMES_SESSION_TOKEN__,
               filename: props.video.name,
               apiUrl: new URL(mediaUrl, window.location.origin).href,
@@ -783,12 +783,12 @@
       if (event.origin !== window.location.origin || !frame || !frame.contentWindow || event.source !== frame.contentWindow) return;
       const data = event.data;
       if (!data || typeof data !== "object") return;
-      if (data.type === "waiting-studio:player-ready") {
+      if (data.type === "video-agent:player-ready") {
         setPlayerReady(Number.isFinite(data.duration) && data.duration > 0);
-      } else if (data.type === "waiting-studio:time-update") {
+      } else if (data.type === "video-agent:time-update") {
         if (Number.isFinite(data.currentTime)) setCurrentTime(data.currentTime);
         if (Number.isFinite(data.duration)) setPlayerReady(data.duration > 0);
-      } else if (data.type === "waiting-studio:player-error") {
+      } else if (data.type === "video-agent:player-error") {
         setPlayerReady(false);
         setMomentNotice({ kind: "error", text: "La lecture progressive a échoué. Vérifie la session du Dashboard et réessaie." });
       }
@@ -848,7 +848,7 @@
         const playback = typeof player.play === "function" ? player.play() : null;
         if (playback && typeof playback.catch === "function") playback.catch(() => {});
       } else if (player.contentWindow) {
-        player.contentWindow.postMessage({ type: "waiting-studio:seek", timeSeconds: moment.timeSeconds }, window.location.origin);
+        player.contentWindow.postMessage({ type: "video-agent:seek", timeSeconds: moment.timeSeconds }, window.location.origin);
       }
       setCurrentTime(moment.timeSeconds);
     };
@@ -891,7 +891,7 @@
       }, "← Retour aux rediffusions"),
       h("header", { className: "wvs__content-heading" },
         h("div", null,
-          h("p", { className: "wvs__eyebrow" }, "Waiting Studio · espace de contenu"),
+          h("p", { className: "wvs__eyebrow" }, "Agent Editor · espace de contenu"),
           h("h1", { id: "wvs-content-title" }, props.video.name),
           h("p", { className: "wvs__panel-subtitle" }, "Brouillons liés à cette rediffusion. La vidéo source reste intacte."),
         ),
@@ -1198,5 +1198,5 @@
     );
   }
 
-  window.__HERMES_PLUGINS__.register("waiting-studio", WaitingStudioPage);
+  window.__HERMES_PLUGINS__.register("video-agent", WaitingStudioPage);
 })();

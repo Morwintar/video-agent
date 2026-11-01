@@ -1,7 +1,7 @@
 "use strict";
 
 (() => {
-  const video = document.getElementById("waiting-studio-video");
+  const video = document.getElementById("video-agent-video");
   const status = document.getElementById("status");
   const parentOrigin = window.location.origin;
   let initialized = false;
@@ -29,8 +29,8 @@
     if (typeof token !== "string" || !token || token.length > 4096) throw new Error("Session Dashboard indisponible.");
 
     const apiUrl = new URL(raw.apiUrl, parentOrigin);
-    const routeSuffix = `/api/plugins/waiting-studio/videos/waiting/${encodeURIComponent(filename)}`;
-    const routeIndex = apiUrl.pathname.lastIndexOf("/api/plugins/waiting-studio/videos/waiting/");
+    const routeSuffix = `/api/plugins/video-agent/videos/waiting/${encodeURIComponent(filename)}`;
+    const routeIndex = apiUrl.pathname.lastIndexOf("/api/plugins/video-agent/videos/waiting/");
     if (apiUrl.origin !== parentOrigin || apiUrl.username || apiUrl.password || apiUrl.hash || routeIndex < 0
         || apiUrl.pathname !== `${apiUrl.pathname.slice(0, routeIndex)}${routeSuffix}`) {
       throw new Error("Adresse de rediffusion invalide.");
@@ -112,11 +112,11 @@
       channel.port1.onmessage = (event) => {
         window.clearTimeout(timeout);
         channel.port1.close();
-        if (event.data && event.data.type === "waiting-studio:media-auth-ready") resolve();
+        if (event.data && event.data.type === "video-agent:media-auth-ready") resolve();
         else reject(new Error("Le lecteur a refusé l’autorisation de session."));
       };
       controller.postMessage({
-        type: "waiting-studio:set-media-auth",
+        type: "video-agent:set-media-auth",
         token: config.token,
         filename: config.filename,
         apiUrl: config.apiUrl,
@@ -143,10 +143,10 @@
       if (workerAuthorizationHandler) navigator.serviceWorker.removeEventListener("message", workerAuthorizationHandler);
       workerAuthorizationHandler = (event) => {
         if (event.source !== navigator.serviceWorker.controller || !event.data
-            || event.data.type !== "waiting-studio:request-media-auth"
+            || event.data.type !== "video-agent:request-media-auth"
             || event.data.filename !== config.filename || !event.ports || !event.ports[0]) return;
         event.ports[0].postMessage({
-          type: "waiting-studio:media-auth-response",
+          type: "video-agent:media-auth-response",
           token: config.token,
           filename: config.filename,
           apiUrl: config.apiUrl,
@@ -158,22 +158,22 @@
       video.addEventListener("loadedmetadata", () => {
         status.hidden = true;
         const duration = Number.isFinite(video.duration) ? video.duration : null;
-        report("waiting-studio:player-ready", { duration });
-        report("waiting-studio:time-update", { currentTime: video.currentTime, duration });
+        report("video-agent:player-ready", { duration });
+        report("video-agent:time-update", { currentTime: video.currentTime, duration });
       });
       video.addEventListener("timeupdate", () => {
-        report("waiting-studio:time-update", {
+        report("video-agent:time-update", {
           currentTime: video.currentTime,
           duration: Number.isFinite(video.duration) ? video.duration : null,
         });
       });
       video.addEventListener("error", () => {
         showStatus("Impossible de lire la rediffusion. Vérifie la session du Dashboard et réessaie.");
-        report("waiting-studio:player-error", {});
+        report("video-agent:player-error", {});
       });
       window.addEventListener("message", (event) => {
         if (event.origin !== parentOrigin || event.source !== window.parent || !event.data || typeof event.data !== "object") return;
-        if (event.data.type !== "waiting-studio:seek" || !Number.isFinite(event.data.timeSeconds)) return;
+        if (event.data.type !== "video-agent:seek" || !Number.isFinite(event.data.timeSeconds)) return;
         if (event.data.timeSeconds < 0 || (Number.isFinite(video.duration) && event.data.timeSeconds > video.duration)) return;
         video.currentTime = event.data.timeSeconds;
       });
@@ -183,12 +183,12 @@
     } catch (_error) {
       initialized = false;
       showStatus(_error && _error.message ? _error.message : "Impossible de préparer le lecteur.");
-      report("waiting-studio:player-error", {});
+      report("video-agent:player-error", {});
     }
   }
 
   window.addEventListener("message", (event) => {
-    if (event.origin !== parentOrigin || event.source !== window.parent || !event.data || event.data.type !== "waiting-studio:init-media-player") return;
+    if (event.origin !== parentOrigin || event.source !== window.parent || !event.data || event.data.type !== "video-agent:init-media-player") return;
     startPlayer(event.data);
   });
 
@@ -198,6 +198,6 @@
       workerAuthorizationHandler = null;
     }
     const controller = navigator.serviceWorker && navigator.serviceWorker.controller;
-    if (controller) controller.postMessage({ type: "waiting-studio:clear-media-auth" });
+    if (controller) controller.postMessage({ type: "video-agent:clear-media-auth" });
   });
 })();
