@@ -319,9 +319,16 @@ def _load_references(home: Path) -> list[dict[str, Any]]:
             download_status = item.get("downloadStatus", "not_requested")
             video_file = item.get("videoFile")
             download_error = item.get("downloadError", "")
+            managed_video_paths = {
+                f"{reference_id}.mp4",
+                f"downloads/{reference_id}.mp4",
+            }
             if (
                 download_status not in {"not_requested", "queued", "downloading", "completed", "failed"}
-                or (video_file is not None and video_file != f"downloads/{reference_id}.mp4")
+                or (
+                    video_file is not None
+                    and (not isinstance(video_file, str) or video_file not in managed_video_paths)
+                )
                 or not isinstance(download_error, str)
                 or len(download_error) > 300
             ):
@@ -412,7 +419,7 @@ def _delete_reference(home: Path, reference_id: str) -> bool:
         if len(remaining) == len(references):
             return False
         _save_references(home, remaining)
-        if removed is not None and removed.get("videoFile") == f"downloads/{reference_id}.mp4":
+        if removed is not None and isinstance(removed.get("videoFile"), str):
             local_video = _resolve_managed_reference_video(reference_id, removed["videoFile"])
             if local_video is not None:
                 local_video.unlink(missing_ok=True)
@@ -420,12 +427,15 @@ def _delete_reference(home: Path, reference_id: str) -> bool:
 
 
 def _resolve_managed_reference_video(reference_id: str, video_file: str) -> Path | None:
-    """Resolve only the MP4 copy whose path is deterministically owned by this reference ID."""
+    """Resolve the canonical plugin-owned copy, including the legacy downloads subfolder."""
     try:
         parsed_id = uuid.UUID(reference_id)
     except (ValueError, TypeError, AttributeError):
         return None
-    if str(parsed_id) != reference_id or video_file != f"downloads/{reference_id}.mp4":
+    if str(parsed_id) != reference_id or video_file not in {
+        f"{reference_id}.mp4",
+        f"downloads/{reference_id}.mp4",
+    }:
         return None
     workspace = _active_workspace_root()
     if workspace is None:
@@ -441,6 +451,32 @@ def _reference_video_is_available(reference: dict[str, Any]) -> bool:
         return False
     local_video = _resolve_managed_reference_video(reference.get("id", ""), video_file)
     return local_video is not None and local_video.is_file()
+
+
+def _link_legacy_reference_video_to_root(reference: dict[str, Any]) -> Path | None:
+    """Link a legacy managed download into References root without overwriting any file."""
+    reference_id = reference.get("id")
+    if not isinstance(reference_id, str) or reference.get("videoFile") != f"downloads/{reference_id}.mp4":
+        return None
+    source = _resolve_managed_reference_video(reference_id, reference["videoFile"])
+    workspace = _active_workspace_root()
+    if source is None or workspace is None:
+        return None
+    references_dir = workspace / "References"
+    if references_dir.is_symlink():
+        return None
+    try:
+        resolved_references_dir = references_dir.resolve(strict=True)
+        if resolved_references_dir.parent != workspace:
+            return None
+        destination = resolved_references_dir / f"{reference_id}.mp4"
+        if destination.exists() or destination.is_symlink():
+            return None
+        os.link(source, destination, follow_symlinks=False)
+    except OSError:
+        return None
+    reference["videoFile"] = f"{reference_id}.mp4"
+    return source
 
 
 def _set_reference_download_state(
@@ -480,14 +516,10 @@ def _reference_download_directories(workspace: Path) -> tuple[Path, Path]:
     staging_root = staging_root.resolve(strict=True)
     if staging_root.parent != workspace or not staging_root.is_dir():
         raise OSError("unsafe reference staging directory")
-    downloads_root = references_dir / "downloads"
-    if downloads_root.is_symlink():
-        raise OSError("unsafe reference downloads directory")
-    downloads_root.mkdir(mode=0o750, exist_ok=True)
-    downloads_root = downloads_root.resolve(strict=True)
-    if downloads_root.parent != references_dir.resolve(strict=True) or not downloads_root.is_dir():
-        raise OSError("unsafe reference downloads directory")
-    return staging_root, downloads_root
+    resolved_references_dir = references_dir.resolve(strict=True)
+    if resolved_references_dir.parent != workspace or not resolved_references_dir.is_dir():
+        raise OSError("unsafe references directory")
+    return staging_root, resolved_references_dir
 
 
 def _download_reference_video(home: Path, reference_id: str) -> None:
@@ -504,7 +536,7 @@ def _download_reference_video(home: Path, reference_id: str) -> None:
         workspace = _active_workspace_root()
         if workspace is None:
             raise RuntimeError("workspace unavailable")
-        staging_root, downloads_root = _reference_download_directories(workspace)
+        staging_root, references_dir = _reference_download_directories(workspace)
         staging_directory = staging_root / reference_id
         staging_directory.mkdir(mode=0o700, exist_ok=False)
         import yt_dlp
@@ -542,7 +574,7 @@ def _download_reference_video(home: Path, reference_id: str) -> None:
         size_bytes = downloaded_video.stat().st_size
         if size_bytes <= 0 or size_bytes > _MAX_REFERENCE_DOWNLOAD_BYTES:
             raise RuntimeError("MP4 output exceeds the configured size limit")
-        final_video = downloads_root / f"{reference_id}.mp4"
+        final_video = references_dir / f"{reference_id}.mp4"
         if final_video.exists() or final_video.is_symlink():
             raise RuntimeError("managed destination already exists")
         os.replace(downloaded_video, final_video)
@@ -550,7 +582,7 @@ def _download_reference_video(home: Path, reference_id: str) -> None:
             home,
             reference_id,
             "completed",
-            video_file=f"downloads/{reference_id}.mp4",
+            video_file=f"{reference_id}.mp4",
         ):
             final_video.unlink(missing_ok=True)
     except Exception:
@@ -1637,14 +1669,26 @@ def list_references() -> dict[str, Any]:
         with _REFERENCE_LOCK:
             references = _load_references(home)
             changed = False
+            legacy_sources: list[Path] = []
             for reference in references:
-                if reference.get("downloadStatus") == "completed" and not _reference_video_is_available(reference):
+                if reference.get("downloadStatus") != "completed":
+                    continue
+                legacy_source = _link_legacy_reference_video_to_root(reference)
+                if legacy_source is not None:
+                    legacy_sources.append(legacy_source)
+                    changed = True
+                if not _reference_video_is_available(reference):
                     reference["downloadStatus"] = "not_requested"
                     reference.pop("videoFile", None)
                     reference.pop("downloadError", None)
                     changed = True
             if changed:
                 _save_references(home, references)
+            for legacy_source in legacy_sources:
+                try:
+                    legacy_source.unlink(missing_ok=True)
+                except OSError:
+                    pass
         return {"references": references}
     except OSError as exc:
         raise HTTPException(status_code=500, detail="Impossible de lire les références.") from exc

@@ -5,6 +5,9 @@ Les changements notables du projet sont consignés ici. Les versions suivent
 
 ## [Unreleased]
 
+### Fixed
+- Place les nouvelles copies MP4 directement à la racine de `workspace/References/`; lors du chargement des références, migre sans écrasement les copies gérées de l’ancien sous-dossier `downloads/` pour les rendre immédiatement visibles dans la bibliothèque.
+
 ## [0.5.0] - 2026-11-01
 
 ### Added

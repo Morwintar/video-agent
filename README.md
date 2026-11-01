@@ -18,7 +18,7 @@
 - **Bibliothèque `Waiting`** — inventaire récursif des MP4, avec miniatures générées à la demande par FFmpeg.
 - **Lecture progressive dans Hermes Desktop** — lecteur intégré dans `Waiting`, `References` et `Finish`; la vidéo garde les contrôles et le seek natifs.
 - **Espace de travail par rediffusion** — repères horodatés, notes, brouillons Short/Vidéo et aperçu des clips MP4 correspondants déjà dans `Finish`.
-- **Références éditoriales** — liens HTTPS YouTube et TikTok, notes et liste de points d’observation (accroche, rythme, cadrage, sous-titres, audio et payoff). À l’ajout, `yt-dlp` télécharge automatiquement une copie MP4 gérée sous `References/downloads/`; l’état et les erreurs sont affichés, les échecs peuvent être relancés, et retirer la référence supprime uniquement cette copie gérée.
+- **Références éditoriales** — liens HTTPS YouTube et TikTok, notes et liste de points d’observation (accroche, rythme, cadrage, sous-titres, audio et payoff). À l’ajout, `yt-dlp` télécharge automatiquement une copie MP4 gérée directement dans `References/`; l’état et les erreurs sont affichés, les échecs peuvent être relancés, et retirer la référence supprime uniquement cette copie gérée.
 - **Skills locaux** — création de skills personnalisés conservés dans le dossier du plugin.
 - **Médias protégés** — le backend du plugin ne retourne qu’un chemin absolu MP4 résolu dans les dossiers allowlistés; l’URL `hermes-media://remote` utilise ensuite le protocole natif Hermes pour l’authentification Gateway et les requêtes Range/seek. Aucun jeton ou ticket n’est placé dans l’URL. Les chemins relatifs arbitraires et les liens symboliques sont refusés. Dans Waiting, le lecteur préfère le dérivé HVC1 existant quand il est valide, sinon il sert la source sans la modifier ni la transcoder.
 - **Section Hermes Desktop « Agent Editor »** — bibliothèque `Waiting` / `References` / `Finish`, lecture MP4 intégrée, liens YouTube/TikTok, repères capturés depuis la position du lecteur et accessibles par seek.
@@ -77,7 +77,7 @@ Le numéro de version **ne déclenche pas** la mise à jour. La révision Git es
 
 - Les fichiers `Waiting`, `References` et `Finish` sont lus depuis `workspace/` quand les trois dossiers du workspace sont présents; sinon, l’ancien dossier `inbox/stream-test/` reste utilisé.
 - Les MP4 sources sont en lecture seule pour le plugin. Les sous-dossiers sont inventoriés sans suivre les liens symboliques.
-- Les liens et notes YouTube/TikTok sont enregistrés dans `workspace/References/links.json` lorsque le montage est actif; à l’ajout, `yt-dlp` télécharge une copie dans `References/downloads/`. Les fichiers sources ne sont ni modifiés ni déplacés; le plugin ne publie rien.
+- Les liens et notes YouTube/TikTok sont enregistrés dans `workspace/References/links.json` lorsque le montage est actif; à l’ajout, `yt-dlp` télécharge une copie directement dans `workspace/References/`. Les fichiers sources ne sont ni modifiés ni déplacés; le plugin ne publie rien.
 - Les miniatures sont produites à la demande, conservées dans un cache mémoire borné et ne sont pas écrites sur disque.
 - Les brouillons, les repères et les copies HVC1 facultatives restent sous `$HERMES_HOME/state/waiting-studio/` (copies de compatibilité dans `compat/`); aucune donnée n’est déplacée lors de l’activation du mount.
 - Les skills créés par l’interface sont enregistrés dans `skills/<nom>/SKILL.md` sous le dossier `video-agent`.

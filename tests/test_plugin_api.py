@@ -538,16 +538,71 @@ class NewFeatureTests(unittest.TestCase):
             home.mkdir()
             with patch.dict(os.environ, {"VIDEO_AGENT_WORKSPACE": str(workspace)}):
                 reference = plugin_api._add_reference(home, "https://youtu.be/abc123", "")
-                local_copy = downloads / f"{reference['id']}.mp4"
+                local_copy = references_dir / f"{reference['id']}.mp4"
                 local_copy.write_bytes(b"downloaded")
-                reference["videoFile"] = f"downloads/{reference['id']}.mp4"
+                reference["videoFile"] = f"{reference['id']}.mp4"
                 reference["downloadStatus"] = "completed"
                 plugin_api._save_references(home, [reference])
 
                 self.assertTrue(plugin_api._delete_reference(home, reference["id"]))
 
+                self.assertFalse(local_copy.exists())
+                self.assertEqual(unrelated.read_bytes(), b"keep")
+
+    def test_legacy_downloads_subfolder_copy_remains_available_and_deletable(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workspace = root / "workspace"
+            references_dir = workspace / "References"
+            legacy_dir = references_dir / "downloads"
+            for name in ("Waiting", "Finish"):
+                (workspace / name).mkdir(parents=True, exist_ok=True)
+            legacy_dir.mkdir(parents=True)
+            home = root / "home"
+            home.mkdir()
+            with patch.dict(os.environ, {"VIDEO_AGENT_WORKSPACE": str(workspace)}):
+                reference = plugin_api._add_reference(home, "https://youtu.be/abc123", "")
+                local_copy = legacy_dir / f"{reference['id']}.mp4"
+                local_copy.write_bytes(b"legacy download")
+                reference["videoFile"] = f"downloads/{reference['id']}.mp4"
+                reference["downloadStatus"] = "completed"
+                plugin_api._save_references(home, [reference])
+
+                self.assertTrue(plugin_api._reference_video_is_available(reference))
+                self.assertTrue(plugin_api._delete_reference(home, reference["id"]))
+
             self.assertFalse(local_copy.exists())
-            self.assertEqual(unrelated.read_bytes(), b"keep")
+
+    def test_list_references_migrates_legacy_managed_copy_into_references_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            workspace = root / "workspace"
+            references_dir = workspace / "References"
+            legacy_dir = references_dir / "downloads"
+            for name in ("Waiting", "Finish"):
+                (workspace / name).mkdir(parents=True, exist_ok=True)
+            legacy_dir.mkdir(parents=True)
+            home = root / "home"
+            home.mkdir()
+            with patch.dict(os.environ, {"VIDEO_AGENT_WORKSPACE": str(workspace), "HERMES_HOME": str(home)}):
+                reference = plugin_api._add_reference(home, "https://youtu.be/abc123", "")
+                legacy_copy = legacy_dir / f"{reference['id']}.mp4"
+                direct_copy = references_dir / f"{reference['id']}.mp4"
+                legacy_copy.write_bytes(b"legacy managed video")
+                reference["videoFile"] = f"downloads/{reference['id']}.mp4"
+                reference["downloadStatus"] = "completed"
+                plugin_api._save_references(home, [reference])
+
+                response = plugin_api.list_references()
+
+            self.assertEqual(response["references"][0]["videoFile"], f"{reference['id']}.mp4")
+            self.assertEqual(response["references"][0]["downloadStatus"], "completed")
+            self.assertFalse(legacy_copy.exists())
+            self.assertEqual(direct_copy.read_bytes(), b"legacy managed video")
+            self.assertEqual(
+                plugin_api._scan_folder(workspace, "references", "References")["videos"],
+                [{"name": f"{reference['id']}.mp4", "sizeBytes": len(b"legacy managed video")}],
+            )
 
     def test_reference_downloader_saves_one_managed_mp4_and_updates_status(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -583,11 +638,14 @@ class NewFeatureTests(unittest.TestCase):
                     plugin_api._download_reference_video(home, reference["id"])
 
                 persisted = plugin_api._list_references(home)[0]
-                output = workspace / "References" / "downloads" / f"{reference['id']}.mp4"
+                output = workspace / "References" / f"{reference['id']}.mp4"
+                inventory = plugin_api._scan_folder(workspace, "references", "References")
 
             self.assertEqual(persisted["downloadStatus"], "completed")
-            self.assertEqual(persisted["videoFile"], f"downloads/{reference['id']}.mp4")
+            self.assertEqual(persisted["videoFile"], f"{reference['id']}.mp4")
             self.assertEqual(output.read_bytes(), b"test MP4")
+            self.assertEqual(inventory["videos"], [{"name": f"{reference['id']}.mp4", "sizeBytes": len(b"test MP4")}])
+            self.assertFalse((workspace / "References" / "downloads").exists())
             self.assertFalse((workspace / ".video-agent-downloads" / reference["id"]).exists())
 
     def test_new_references_capture_the_default_observation_checklist(self) -> None:
