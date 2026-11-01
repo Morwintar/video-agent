@@ -32,6 +32,7 @@ const hookStates = new Map();
 const mutationCalls = [];
 let currentComponent = null;
 let hookIndex = 0;
+let contentQueryState = { data: { moments: [{ id: "moment-1", timeSeconds: 62.5, note: "Payoff", targetFormat: "both" }] }, isLoading: false, error: null, refetch() {} };
 const sampleVideo = { name: "records/waiting-vod.mp4", sizeBytes: 1024 };
 const sampleFolders = [
   { id: "waiting", label: "Waiting", available: true, count: 1, videos: [sampleVideo] },
@@ -66,7 +67,7 @@ sandbox.useQuery = options => {
   if (queryKey[1] === "videos") return { data: { folders: sampleFolders }, isLoading: false, refetch() {} };
   if (queryKey[1] === "references") return { data: { references: [] }, isLoading: false, refetch() {} };
   if (queryKey[1] === "stream") return { data: sampleTicket, isLoading: false, error: null, refetch() {} };
-  return { data: { moments: [{ id: "moment-1", timeSeconds: 62.5, note: "Payoff", targetFormat: "both" }] }, isLoading: false, error: null, refetch() {} };
+  return contentQueryState;
 };
 sandbox.useMutation = options => ({
   mutate(payload) {
@@ -132,6 +133,14 @@ assert.match(pageText, /Agent Editor/);
 assert.match(pageText, /À traiter/);
 assert.match(pageText, /waiting-vod\.mp4/);
 assert.match(pageText, /Repères/);
+contentQueryState = { data: undefined, isLoading: true, error: null, refetch() {} };
+const loadingMomentsPage = renderPage();
+assert.ok(findNode(loadingMomentsPage, node => node.type === "video"), "The playback panel should render while moments are loading");
+contentQueryState = { data: undefined, isLoading: false, error: new Error("moments unavailable"), refetch() {} };
+const failedMomentsPage = renderPage();
+assert.ok(findNode(failedMomentsPage, node => node.type === "video"), "A moments API failure must not hide the player");
+contentQueryState = { data: { moments: [{ id: "moment-1", timeSeconds: 62.5, note: "Payoff", targetFormat: "both" }] }, isLoading: false, error: null, refetch() {} };
+page = renderPage();
 const initialPlayer = findNode(page, node => node.type === "video");
 assert.ok(initialPlayer, "Selected video should open in the embedded player");
 assert.equal(initialPlayer.props.src, sampleTicket.streamUrl);

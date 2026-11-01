@@ -60,7 +60,7 @@ Seul le marqueur `workspace/.gitkeep` est versionné; le reste de `workspace/` e
 
 ## Versionnement et mises à jour
 
-Le plugin porte actuellement la version `0.3.0` dans ses manifestes :
+Le plugin porte actuellement la version `0.3.1` dans ses manifestes :
 
 - `plugin.yaml` — identité du paquet Agent Plugin et du compagnon Desktop.
 - `plugin.json` — version du paquet portable Agent Plugins.

@@ -237,16 +237,6 @@ function MomentWorkspace({ rest, scheduleInterval, video, contentQuery, currentF
     momentMutation.mutate({ timeSeconds, note: note.trim(), targetFormat })
   }
 
-  if (contentQuery.isLoading) {
-    return jsx('div', { className: 'py-8 text-sm text-(--ui-text-tertiary)', children: 'Chargement des repères…' })
-  }
-  if (contentQuery.error) {
-    return jsxs('div', {
-      className: 'flex flex-col gap-3 text-sm',
-      children: [jsx('p', { className: 'text-(--ui-text-secondary)', children: errorText(contentQuery.error, 'Impossible de charger les repères.') }), jsx('button', { type: 'button', className: buttonClass(), onClick: () => contentQuery.refetch(), children: 'Réessayer' })],
-    })
-  }
-
   return jsxs('div', {
     className: 'flex min-h-0 flex-col gap-4',
     children: [
@@ -266,13 +256,20 @@ function MomentWorkspace({ rest, scheduleInterval, video, contentQuery, currentF
         title: `Repères · ${moments.length}`,
         description: 'Ils sont enregistrés avec cette vidéo et conservés localement.',
         className: 'flex-1',
-        children: moments.length ? jsx('ol', {
-          className: 'flex min-h-0 flex-col gap-2 overflow-auto',
-          children: [...moments].sort((left, right) => left.timeSeconds - right.timeSeconds).map(moment => jsxs('li', {
-            className: 'grid grid-cols-[7.5rem_minmax(0,1fr)_5rem] gap-3 border-b border-(--ui-stroke-secondary) py-2 text-sm',
-            children: [jsx('button', { type: 'button', className: 'font-mono text-(--ui-accent) underline-offset-4 hover:underline', onClick: () => setSeekTime(moment.timeSeconds), 'aria-label': `Aller à ${formatTimecode(moment.timeSeconds)}`, children: formatTimecode(moment.timeSeconds) }), jsx('span', { className: 'break-words text-foreground', children: moment.note }), jsx('span', { className: 'text-right text-xs text-(--ui-text-tertiary)', children: moment.targetFormat === 'both' ? 'Les deux' : moment.targetFormat === 'short' ? 'Short' : 'Vidéo' })],
-          }, moment.id)),
-        }) : jsx('p', { className: 'py-4 text-sm text-(--ui-text-tertiary)', children: 'Pas encore de repère pour cette vidéo.' }),
+        children: contentQuery.isLoading
+          ? jsx('p', { className: 'py-4 text-sm text-(--ui-text-tertiary)', role: 'status', children: 'Chargement des repères…' })
+          : contentQuery.error
+            ? jsxs('div', {
+              className: 'flex flex-col gap-3 py-4 text-sm',
+              children: [jsx('p', { className: 'text-(--ui-text-secondary)', role: 'alert', children: errorText(contentQuery.error, 'Impossible de charger les repères.') }), jsx(Button, { type: 'button', onClick: () => contentQuery.refetch(), children: 'Réessayer' })],
+            })
+            : moments.length ? jsx('ol', {
+              className: 'flex min-h-0 flex-col gap-2 overflow-auto',
+              children: [...moments].sort((left, right) => left.timeSeconds - right.timeSeconds).map(moment => jsxs('li', {
+                className: 'grid grid-cols-[7.5rem_minmax(0,1fr)_5rem] gap-3 border-b border-(--ui-stroke-secondary) py-2 text-sm',
+                children: [jsx('button', { type: 'button', className: 'font-mono text-(--ui-accent) underline-offset-4 hover:underline', onClick: () => setSeekTime(moment.timeSeconds), 'aria-label': `Aller à ${formatTimecode(moment.timeSeconds)}`, children: formatTimecode(moment.timeSeconds) }), jsx('span', { className: 'break-words text-foreground', children: moment.note }), jsx('span', { className: 'text-right text-xs text-(--ui-text-tertiary)', children: moment.targetFormat === 'both' ? 'Les deux' : moment.targetFormat === 'short' ? 'Short' : 'Vidéo' })],
+              }, moment.id)),
+            }) : jsx('p', { className: 'py-4 text-sm text-(--ui-text-tertiary)', children: 'Pas encore de repère pour cette vidéo.' }),
       }),
     ],
   })

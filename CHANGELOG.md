@@ -3,6 +3,11 @@
 Les changements notables du projet sont consignés ici. Les versions suivent
 [SemVer](https://semver.org/).
 
+## [0.3.1] - 2026-11-01
+
+### Fixed
+- Le lecteur Waiting reste visible si le chargement des repères est en cours ou échoue.
+
 ## [0.3.0] - 2026-11-01
 
 ### Added
