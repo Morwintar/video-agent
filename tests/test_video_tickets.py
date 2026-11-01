@@ -117,6 +117,68 @@ class VideoTicketRouteTests(unittest.TestCase):
         self.assertEqual(stream.status_code, 404)
         self.assertEqual(renewed.status_code, 404)
 
+    def test_waiting_ticket_streams_existing_hvc1_compat_remux(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            waiting = root / "Waiting"
+            waiting.mkdir()
+            (root / "Finish").mkdir()
+            source = waiting / "vod.mp4"
+            source.write_bytes(b"source-hev1-container")
+            compat = root / "vod-hvc1.mp4"
+            compat.write_bytes(b"compatible-hvc1-container")
+            app = self.make_app()
+            with patch("plugin_api._media_root", return_value=root), patch(
+                "plugin_api._resolve_hvc1_compat_video", return_value=compat
+            ):
+                with TestClient(app) as client:
+                    created = client.post("/api/plugins/video-agent/video-tickets", json={
+                        "folderId": "waiting",
+                        "filename": "vod.mp4",
+                    })
+                    self.assertEqual(created.status_code, 201)
+                    stream_url = urlsplit(created.json()["streamUrl"])
+                    response = client.get(
+                        f"{stream_url.path}?{stream_url.query}",
+                        headers={"Range": "bytes=0-9"},
+                    )
+
+        self.assertEqual(response.status_code, 206)
+        self.assertEqual(response.content, b"compatible-hvc1-container"[:10])
+        self.assertEqual(
+            response.headers["content-range"],
+            f"bytes 0-9/{len(b'compatible-hvc1-container')}",
+        )
+
+    def test_replaced_hvc1_remux_is_not_used_by_an_existing_ticket(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            waiting = root / "Waiting"
+            waiting.mkdir()
+            (root / "Finish").mkdir()
+            source = waiting / "vod.mp4"
+            source.write_bytes(b"original-source")
+            compat = root / "vod-hvc1.mp4"
+            compat.write_bytes(b"original-compatible-remux")
+            app = self.make_app()
+            with patch("plugin_api._media_root", return_value=root), patch(
+                "plugin_api._resolve_hvc1_compat_video", return_value=compat
+            ):
+                with TestClient(app) as client:
+                    created = client.post("/api/plugins/video-agent/video-tickets", json={
+                        "folderId": "waiting",
+                        "filename": "vod.mp4",
+                    })
+                    self.assertEqual(created.status_code, 201)
+                    stream_url = urlsplit(created.json()["streamUrl"])
+                    compat.write_bytes(b"replacement-compatible-remux")
+                    response = client.get(f"{stream_url.path}?{stream_url.query}")
+                    source_bytes_after = source.read_bytes()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"original-source")
+        self.assertEqual(source_bytes_after, b"original-source")
+
     def test_expired_ticket_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

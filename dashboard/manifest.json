@@ -3,7 +3,7 @@
   "label": "Agent Editor",
   "description": "Agent Editor pour organiser et lire les MP4 locaux, conserver leurs repères et préparer des clips.",
   "icon": "Film",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "tab": {
     "path": "/montage-video",
     "position": "after:skills"

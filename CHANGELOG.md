@@ -3,6 +3,11 @@
 Les changements notables du projet sont consignés ici. Les versions suivent
 [SemVer](https://semver.org/).
 
+## [0.3.2] - 2026-11-01
+
+### Fixed
+- Les tickets Desktop de Waiting privilégient le dérivé HVC1 existant lorsqu’il est valide; la source HEV1 est conservée et les requêtes Range restent prises en charge.
+
 ## [0.3.1] - 2026-11-01
 
 ### Fixed

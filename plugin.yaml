@@ -1,5 +1,5 @@
 name: video-agent
-version: 0.3.1
+version: 0.3.2
 manifest_version: 1
 kind: standalone
 description: "Agent Editor: organiser et lire les MP4 locaux; conserver les liens, notes et repères vidéo."

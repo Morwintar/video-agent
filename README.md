@@ -20,7 +20,7 @@
 - **Espace de travail par rediffusion** — repères horodatés, notes, brouillons Short/Vidéo et aperçu des clips MP4 correspondants déjà dans `Finish`.
 - **Références éditoriales** — liens HTTPS YouTube et TikTok, notes et liste de points d’observation (accroche, rythme, cadrage, sous-titres, audio et payoff). Les liens sont enregistrés, pas visités ni téléchargés.
 - **Skills locaux** — création de skills personnalisés conservés dans le dossier du plugin.
-- **Médias protégés** — l’inventaire et la création des tickets passent par l’API du plugin; un ticket aléatoire à durée limitée autorise uniquement la lecture d’un MP4 choisi. Les chemins arbitraires et les liens symboliques sont refusés.
+- **Médias protégés** — l’inventaire et la création des tickets passent par l’API du plugin; un ticket aléatoire à durée limitée autorise uniquement la lecture d’un MP4 choisi. Les chemins arbitraires et les liens symboliques sont refusés. Dans Waiting, le lecteur préfère le dérivé HVC1 existant quand il est valide, sinon il sert la source sans la modifier ni la transcoder.
 - **Section Hermes Desktop « Agent Editor »** — bibliothèque `Waiting` / `References` / `Finish`, lecture MP4 intégrée, liens YouTube/TikTok, repères capturés depuis la position du lecteur et accessibles par seek.
 - **Sources en lecture seule** — l’interface ne déplace, ne transcode et ne modifie aucun MP4 source.
 
@@ -60,7 +60,7 @@ Seul le marqueur `workspace/.gitkeep` est versionné; le reste de `workspace/` e
 
 ## Versionnement et mises à jour
 
-Le plugin porte actuellement la version `0.3.1` dans ses manifestes :
+Le plugin porte actuellement la version `0.3.2` dans ses manifestes :
 
 - `plugin.yaml` — identité du paquet Agent Plugin et du compagnon Desktop.
 - `plugin.json` — version du paquet portable Agent Plugins.

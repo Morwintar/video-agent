@@ -482,11 +482,22 @@ def _resolve_stream_ticket_video(record: dict[str, Any]) -> Path | None:
     folder_label = dict(FOLDERS).get(folder_id)
     if folder_label is None:
         return None
-    path = _resolve_video_in_folder(_media_root(), folder_label, filename)
+    media_root = _media_root()
+    path = _resolve_video_in_folder(media_root, folder_label, filename)
     if path is None:
         return None
     try:
-        return path if _video_file_identity(path) == record.get("fileIdentity") else None
+        if _video_file_identity(path) != record.get("fileIdentity"):
+            return None
+        compatibility_identity = record.get("compatibilityFileIdentity")
+        if folder_id == "waiting" and compatibility_identity is not None:
+            compatibility_path = _resolve_hvc1_compat_video(media_root, filename)
+            if (
+                compatibility_path is not None
+                and _video_file_identity(compatibility_path) == compatibility_identity
+            ):
+                return compatibility_path
+        return path
     except OSError:
         return None
 
@@ -1095,13 +1106,24 @@ def create_video_ticket(payload: dict[str, Any], request: Request, response: Res
     if not isinstance(filename, str):
         raise HTTPException(status_code=404, detail="Video not found")
 
-    video_path = _resolve_video_in_folder(_media_root(), folder_label, filename)
+    media_root = _media_root()
+    video_path = _resolve_video_in_folder(media_root, folder_label, filename)
     if video_path is None:
         raise HTTPException(status_code=404, detail="Video not found")
     try:
         file_identity = _video_file_identity(video_path)
     except OSError as exc:
         raise HTTPException(status_code=404, detail="Video not found") from exc
+
+    compatibility_identity = None
+    if folder_id == "waiting":
+        compatibility_path = _resolve_hvc1_compat_video(media_root, filename)
+        if compatibility_path is not None:
+            try:
+                compatibility_identity = _video_file_identity(compatibility_path)
+            except OSError:
+                # If the optional remux vanishes, the ticket can still use its source MP4.
+                compatibility_identity = None
 
     ticket_id = secrets.token_urlsafe(32)
     ticket_key = _stream_ticket_key(ticket_id)
@@ -1116,6 +1138,7 @@ def create_video_ticket(payload: dict[str, Any], request: Request, response: Res
             "folderId": folder_id,
             "filename": filename,
             "fileIdentity": file_identity,
+            "compatibilityFileIdentity": compatibility_identity,
             "expiresAt": now + _STREAM_TICKET_TTL_SECONDS,
         }
 
